@@ -66,7 +66,8 @@ flagsmith eval hero_headline --identity alice
 
 ## The experiment (Track 01)
 
-FlagKit A/B tests **its own landing page**.
+FlagKit A/B tests **its own landing page**. It's live, so try it: **https://lqmon.github.io/toggle_wars/**
+(Static page from [`docs/`](docs/) on GitHub Pages, running Flagsmith Cloud experiment #1245. Only the client-side environment key is published.)
 
 - **Hypothesis:** replacing the generic headline *"Feature flags for modern teams"* with the benefit-led *"Ship on Friday. Roll back in one click."* will increase the share of visitors who click **Sign up**.
 - **Flag:** `hero_headline`, multivariate. Control `control`, variant key `benefit`.
