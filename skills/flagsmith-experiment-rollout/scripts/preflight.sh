@@ -9,5 +9,5 @@ echo "host=${FLAGSMITH_API_URL:-https://api.flagsmith.com} cli=$(flagsmith --ver
 flagsmith api "$E/" --jq '"env=\(.name) project=\(.project)"'
 wh=$(flagsmith api "$E/warehouse-connections/" --jq '(if type=="array" then . else .results end)[0] | "\(.warehouse_type):\(.status)"' 2>/dev/null || echo "none:missing")
 echo "warehouse=$wh"
-flagsmith api "$E/experiments/" --jq '(if type=="array" then . else .results end)[] | "experiment=\(.id) \(.status) \(.name)"' 2>/dev/null || true
+flagsmith api "$E/experiments/" --jq '(if type=="array" then . else .results end)[] | select(.status=="running" or .status=="created") | "experiment=\(.id) \(.status) \(.name)"' 2>/dev/null || true
 [[ "$wh" == *":connected" ]] || { echo "BLOCKER: warehouse not connected"; exit 2; }

@@ -15,7 +15,8 @@ Work in phases. **Stop at every ⛔ gate and wait for an explicit yes from the p
 Never skip a gate because the change "looks safe".
 
 Keep output small: always use `--jq` to fetch only the fields you need. The scripts in
-`scripts/` already do this; prefer them over raw calls.
+`scripts/` already do this; prefer them over raw calls. A full run reads about 130 tokens of tool output.
+Never print whole JSON payloads; if you need one field, use `--jq '.field'`.
 
 ## 0. Preflight (no changes)
 

@@ -5,7 +5,15 @@ ID=${1:?experiment id}
 [[ $ID =~ ^[0-9]+$ ]] || { echo "experiment id must be a number"; exit 1; }
 : "${FLAGSMITH_ENVIRONMENT:?source flagsmith.env or set FLAGSMITH_ENVIRONMENT}"
 E="api/v1/environments/$FLAGSMITH_ENVIRONMENT/experiments/$ID"
-[ "${2:-}" = "--no-refresh" ] || flagsmith api "$E/results/refresh/" -X POST >/dev/null 2>&1 || true  # ≤ once / 5 min
+if [ "${2:-}" != "--no-refresh" ]; then
+  # ask for a recompute (Flagsmith allows one per 5 min), then wait up to ~20s for it to land
+  req=$(flagsmith api "$E/results/refresh/" -X POST --jq '.results.refresh_requested_at // .refresh_requested_at // empty' 2>/dev/null || true)
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    asof=$(flagsmith api "$E/results/" --jq '.results.as_of // ""')
+    [[ -z "$req" || ( -n "$asof" && ! "$asof" < "$req" ) ]] && break
+    sleep 2
+  done
+fi
 flagsmith api "$E/" --jq '"#\(.id) \(.status): \(.name)"'
 flagsmith api "$E/results/" --jq '
   .results as $r | ($r.payload.metrics[0] // null) as $m |

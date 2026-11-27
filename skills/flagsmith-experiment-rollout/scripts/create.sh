@@ -15,14 +15,14 @@ E="api/v1/environments/$FLAGSMITH_ENVIRONMENT"
 
 # 1. flag
 if ! flagsmith feature get "$FLAG" --jq .id >/dev/null 2>&1; then
-  flagsmith feature create "$FLAG" --value "$CONTROL" --enabled --description "Experiment: $NAME" --jq '"flag created id=\(.id)"'
+  flagsmith feature create "$FLAG" --value "$CONTROL" --enabled --description "Experiment: $NAME" --jq '"flag created id=\(.id)"' 2>/dev/null
 fi
 FID=$(flagsmith feature get "$FLAG" --jq .id)
 
 # 2. keyed variants (variant value = key)
 have=$(flagsmith feature variant list "$FLAG" --jq '[.[].key] | join(",")' 2>/dev/null || echo "")
 for k in "${KEYS[@]}"; do
-  [[ ",$have," == *",$k,"* ]] || flagsmith feature variant add "$FLAG" --key "$k" --value "$k" --weight 0 --jq '"variant \(.key) id=\(.id)"'
+  [[ ",$have," == *",$k,"* ]] || flagsmith feature variant add "$FLAG" --key "$k" --value "$k" --weight 0 --jq '"variant \(.key) id=\(.id)"' 2>/dev/null
 done
 OPTS=$(flagsmith feature variant list "$FLAG" --json)
 
