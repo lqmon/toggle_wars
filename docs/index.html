@@ -6,51 +6,303 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://edge.api.flagsmith.com https://api.flagsmith.com https://events.api.flagsmith.com; img-src 'self' data:; base-uri 'none'; form-action 'none'" />
   <meta name="referrer" content="no-referrer" />
   <title>FlagKit — self-hosted Flagsmith in one command</title>
+  <meta name="description" content="Self-hosted Flagsmith with Experimentation in 30 seconds. A doctor that finds silent breakage, a terminal dashboard, an MCP server and an agent skill." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2310b981'/%3E%3Cpath d='M10 7v19M10 8h12l-3 5 3 5H10' fill='none' stroke='%23022c22' stroke-width='3' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E" />
   <style>
-    :root { --bg:#0b1020; --fg:#e8ecf8; --muted:#9aa4c2; --accent:#5eead4; --card:#131a33; }
+    :root {
+      --bg: #070b16; --bg2: #0c1324; --card: rgba(255,255,255,.035); --line: rgba(255,255,255,.08);
+      --fg: #eef2ff; --muted: #94a3b8; --dim: #64748b;
+      --accent: #34d399; --accent2: #22d3ee; --warn: #fbbf24; --bad: #f87171;
+      --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+      --radius: 16px;
+    }
+    @media (prefers-color-scheme: light) {
+      :root { --bg:#f8fafc; --bg2:#eef2f7; --card:#ffffff; --line:rgba(15,23,42,.09); --fg:#0f172a; --muted:#475569; --dim:#64748b; --accent:#059669; --accent2:#0891b2; }
+    }
     * { box-sizing: border-box; }
-    body { margin:0; font: 16px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--fg); }
-    main { max-width: 760px; margin: 0 auto; padding: 72px 20px; }
-    .eyebrow { color: var(--accent); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 13px; }
-    h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.08; margin: 12px 0 16px; min-height: 2.2em; }
+    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+    a { color: inherit; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+
+    .glow { position: fixed; inset: -20vh -10vw auto; height: 90vh; pointer-events: none; z-index: 0;
+      background: radial-gradient(40% 50% at 25% 20%, rgba(52,211,153,.18), transparent 70%),
+                  radial-gradient(35% 45% at 80% 10%, rgba(34,211,238,.14), transparent 70%); filter: blur(10px); }
+    .grid { position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .35;
+      background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+      background-size: 56px 56px; -webkit-mask-image: radial-gradient(70% 60% at 50% 0%, #000 30%, transparent 75%); mask-image: radial-gradient(70% 60% at 50% 0%, #000 30%, transparent 75%); }
+    main, header, footer { position: relative; z-index: 1; }
+
+    header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+    .brand { display: flex; gap: 10px; align-items: center; font-weight: 700; letter-spacing: -.01em; text-decoration: none; }
+    .logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #34d399, #22d3ee); display: grid; place-items: center; }
+    .nav a { color: var(--muted); text-decoration: none; font-size: 14px; margin-left: 18px; }
+    .nav a:hover { color: var(--fg); }
+
+    .hero { display: grid; grid-template-columns: 1.05fr .95fr; gap: 48px; align-items: center; padding: 56px 0 72px; }
+    .pill { display: inline-flex; gap: 8px; align-items: center; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); font-size: 13px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(52,211,153,.2); animation: pulse 2s infinite; }
+    @keyframes pulse { 50% { box-shadow: 0 0 0 7px rgba(52,211,153,0); } }
+    h1 { font-size: clamp(38px, 5.6vw, 64px); line-height: 1.03; letter-spacing: -.035em; margin: 18px 0; min-height: 2.1em; transition: opacity .25s ease; }
+    h1 .grad { background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
     h1.loading { opacity: 0; }
-    p.lead { color: var(--muted); font-size: 19px; max-width: 56ch; }
-    pre { background: var(--card); padding: 16px 18px; border-radius: 10px; overflow-x: auto; color: var(--accent); }
-    .cta { display:inline-block; margin-top: 18px; padding: 14px 26px; font-size: 17px; font-weight: 700; border: 0; border-radius: 10px; background: var(--accent); color: #04231e; cursor: pointer; }
-    .cta:active { transform: translateY(1px); }
-    .thanks { margin-top: 14px; color: var(--accent); min-height: 1.5em; }
-    footer { margin-top: 64px; color: var(--muted); font-size: 13px; }
-    code { color: var(--fg); }
+    .lead { color: var(--muted); font-size: 19px; max-width: 54ch; margin: 0 0 28px; }
+    .ctas { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .btn { appearance: none; border: 0; cursor: pointer; font: inherit; font-weight: 700; border-radius: 12px; padding: 14px 22px; text-decoration: none; display: inline-flex; gap: 8px; align-items: center; transition: transform .12s ease, box-shadow .2s ease, border-color .2s; }
+    .btn-primary { background: linear-gradient(135deg, #34d399, #22d3ee); color: #022c22; box-shadow: 0 10px 30px -10px rgba(52,211,153,.6); }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 14px 36px -10px rgba(52,211,153,.75); }
+    .btn-primary:active { transform: translateY(1px); }
+    .btn-ghost { background: var(--card); color: var(--fg); border: 1px solid var(--line); }
+    .btn-ghost:hover { border-color: var(--accent); }
+    .btn:focus-visible { outline: 3px solid var(--accent2); outline-offset: 3px; }
+    .thanks { margin-top: 16px; padding: 14px 16px; border: 1px solid rgba(52,211,153,.35); background: rgba(52,211,153,.08); border-radius: 12px; font-size: 15px; display: none; }
+    .thanks.show { display: block; animation: rise .3s ease; }
+    .thanks code { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+
+    .term { border-radius: var(--radius); border: 1px solid rgba(255,255,255,.08); background: #0a0f1d; box-shadow: 0 30px 80px -30px rgba(0,0,0,.6); overflow: hidden; color: #e2e8f0; min-width: 0; }
+    .term-bar { display: flex; gap: 8px; align-items: center; padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.06); background: rgba(255,255,255,.02); }
+    .term-bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+    .term-bar i:nth-child(1){background:#f87171}.term-bar i:nth-child(2){background:#fbbf24}.term-bar i:nth-child(3){background:#34d399}
+    .term-bar span { margin-left: 8px; color: #64748b; font: 12px var(--mono); }
+    .term pre { margin: 0; padding: 18px 18px 22px; font: 13px/1.7 var(--mono); min-height: 340px; white-space: pre-wrap; word-break: break-word; }
+    .c-ok { color: #34d399 } .c-dim { color: #64748b } .c-cmd { color: #e2e8f0 } .c-acc { color: #22d3ee } .c-warn { color: #fbbf24 } .c-bad { color: #f87171 }
+    .cursor { display: inline-block; width: 8px; height: 1.05em; vertical-align: -2px; background: #34d399; animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin-bottom: 88px; }
+    .stat { background: var(--bg2); padding: 22px; }
+    .stat b { display: block; font-size: 28px; letter-spacing: -.02em; }
+    .stat span { color: var(--muted); font-size: 14px; }
+
+    section h2 { font-size: clamp(28px, 3.4vw, 40px); letter-spacing: -.025em; line-height: 1.1; margin: 0 0 12px; }
+    .kicker { color: var(--accent); font: 600 12px var(--mono); letter-spacing: .12em; text-transform: uppercase; margin-bottom: 8px; }
+    .sub { color: var(--muted); max-width: 62ch; margin: 0 0 32px; }
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 88px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; transition: border-color .2s, transform .2s; }
+    .card:hover { border-color: rgba(52,211,153,.45); transform: translateY(-2px); }
+    .ico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: rgba(52,211,153,.12); color: var(--accent); margin-bottom: 14px; }
+    .card h3 { margin: 0 0 6px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 15px; }
+    .card code, .mono { font-family: var(--mono); font-size: .86em; color: var(--accent2); }
+    .wide { grid-column: span 2; }
+
+    .doctor { display: grid; grid-template-columns: .9fr 1.1fr; gap: 40px; align-items: center; margin-bottom: 96px; }
+    .doctor ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+    .doctor li { display: flex; gap: 12px; color: var(--muted); }
+    .doctor li b { color: var(--fg); font-weight: 600; }
+    .x { flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; background: rgba(248,113,113,.12); color: var(--bad); font: 700 12px var(--mono); margin-top: 2px; }
+    .doctor .term pre { min-height: 0; }
+
+    .live { border: 1px solid var(--line); border-radius: var(--radius); padding: 28px; background: linear-gradient(135deg, rgba(52,211,153,.08), rgba(34,211,238,.05)); display: grid; grid-template-columns: 1.2fr .8fr; gap: 28px; align-items: center; margin-bottom: 72px; }
+    .live h2 { font-size: 26px; }
+    .variant { font-family: var(--mono); font-size: 15px; padding: 3px 10px; border-radius: 8px; background: rgba(34,211,238,.14); color: var(--accent2); }
+    .arms { display: grid; gap: 10px; }
+    .arm { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card); font-size: 14px; color: var(--muted); transition: border-color .3s; }
+    .arm.me { border-color: var(--accent); color: var(--fg); box-shadow: 0 0 0 3px rgba(52,211,153,.12); }
+    .arm small { display: block; font: 11px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
+
+    footer { border-top: 1px solid var(--line); padding: 28px 0 48px; color: var(--dim); font-size: 13px; }
+    footer .row { display: flex; flex-wrap: wrap; gap: 12px 28px; justify-content: space-between; }
+
+    @media (max-width: 900px) {
+      .hero, .doctor, .live { grid-template-columns: 1fr; }
+      .cards { grid-template-columns: 1fr; } .wide { grid-column: auto; }
+      .stats { grid-template-columns: repeat(2, 1fr); margin-bottom: 64px; }
+      .nav a:not(.gh) { display: none; }
+      .hero { padding: 24px 0 56px; gap: 32px; }
+      .term pre { min-height: 0; font-size: 11.5px; padding: 14px; }
+      .live { padding: 20px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } html { scroll-behavior: auto; } }
   </style>
 </head>
 <body>
-  <main>
-    <div class="eyebrow">FlagKit · open source</div>
-    <h1 id="headline" class="loading">&nbsp;</h1>
-    <p class="lead">Self-hosted Flagsmith with Experimentation, bootstrapped with zero clicks. Includes a terminal dashboard and an agent skill that runs an A/B test end to end.</p>
-    <pre>git clone https://github.com/lqmon/toggle_wars && cd toggle_wars
-npm install && node bin/flagkit.js up</pre>
-    <button class="cta" id="signup">Sign up for early access</button>
-    <div class="thanks" id="thanks"></div>
-    <footer>
-      This page is a live A/B test run with Flagsmith Experimentation.
-      You are visitor <code id="vid"></code>, seeing variation <code id="variant">…</code>.
-      <br />Privacy: only a random anonymous ID, which headline you saw and whether you clicked are sent to Flagsmith. No cookies, no personal data.
-      <a href="https://github.com/lqmon/toggle_wars" style="color:inherit">Source</a>.
-    </footer>
+  <div class="glow"></div><div class="grid"></div>
+
+  <header class="wrap">
+    <a class="brand" href="#top" aria-label="FlagKit home">
+      <span class="logo" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#022c22" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M6 4h11l-2.5 4L17 12H6"/></svg></span>
+      FlagKit
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#doctor">Doctor</a>
+      <a href="#experiment">This page is a test</a>
+      <a class="gh" href="https://github.com/lqmon/toggle_wars" rel="noopener">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main id="top" class="wrap">
+    <section class="hero">
+      <div>
+        <span class="pill"><span class="dot" aria-hidden="true"></span> Open source · built on Flagsmith</span>
+        <h1 id="headline" class="loading">&nbsp;</h1>
+        <p class="lead">Self-hosted Flagsmith with A/B testing, set up with zero clicks. Then a doctor that catches the misconfigurations that silently drop your experiment data.</p>
+        <div class="ctas">
+          <button class="btn btn-primary" id="signup" type="button">
+            Get early access
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+          <a class="btn btn-ghost" href="https://github.com/lqmon/toggle_wars" rel="noopener">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 0-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.2-3.1-.1-.4-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.7.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.1 0 4.6-2.8 5.6-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>
+            Star on GitHub
+          </a>
+        </div>
+        <div class="thanks" id="thanks" role="status" aria-live="polite">
+          <b>You're in. Early access is open right now: it's open source.</b><br />
+          <code>git clone https://github.com/lqmon/toggle_wars &amp;&amp; cd toggle_wars &amp;&amp; npm i &amp;&amp; node bin/flagkit.js up</code>
+          <div style="margin-top:6px;color:var(--muted);font-size:13px">No email collected. Your click was counted as an anonymous conversion in this page's A/B test.</div>
+        </div>
+      </div>
+
+      <div class="term" role="img" aria-label="Terminal: flagkit up bootstraps self-hosted Flagsmith in 28 seconds, then shows experiment results">
+        <div class="term-bar"><i></i><i></i><i></i><span>~/my-app — flagkit</span></div>
+        <pre id="term" aria-hidden="true"></pre>
+      </div>
+    </section>
+
+    <div class="stats" role="list">
+      <div class="stat" role="listitem"><b>~30s</b><span>to self-hosted Flagsmith with experiments on</span></div>
+      <div class="stat" role="listitem"><b>0</b><span>dashboard clicks to bootstrap</span></div>
+      <div class="stat" role="listitem"><b>6</b><span>failures doctor finds in the stock compose setup</span></div>
+      <div class="stat" role="listitem"><b>5</b><span>human approval gates in the agent skill</span></div>
+    </div>
+
+    <section id="features">
+      <div class="kicker">What's inside</div>
+      <h2>Everything after <span class="mono" style="font-size:.8em">docker compose up</span></h2>
+      <p class="sub">Starting Flagsmith is one command. Getting to a working A/B test took an afternoon of reading Django source. FlagKit is that afternoon, automated.</p>
+      <div class="cards">
+        <div class="card wide">
+          <div class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div>
+          <h3><code>flagkit up</code>: zero-click bootstrap</h3>
+          <p>Official Flagsmith images, then admin, org, project and three environments, an admin API key, and the experimentation warehouse, all through the API. Bound to localhost, random secrets, sign-up locked. Writes a <code>flagsmith.env</code> the official CLI understands.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+          <h3><code>flagkit doctor</code></h3>
+          <p>Points at any self-hosted Flagsmith and finds silent breakage, then fixes it after asking.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg></div>
+          <h3><code>flagkit tui</code></h3>
+          <p>Every flag × every environment in your terminal, plus live win probabilities and a guarded “ship the winner”.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg></div>
+          <h3>Agent Skill</h3>
+          <p>A coding agent goes from hypothesis to rollout to cleanup PR with the Flagsmith CLI, stopping at 5 approval gates.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></div>
+          <h3>MCP server</h3>
+          <p>Agents can inspect flags, read results and propose rollouts. A person approves before anything changes.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="doctor" class="doctor">
+      <div>
+        <div class="kicker">flagkit doctor</div>
+        <h2>The stock compose file fails 6 checks</h2>
+        <p class="sub" style="margin-bottom:20px">Run against an untouched upstream <span class="mono">docker-compose.yml</span>, set up the obvious way:</p>
+        <ul>
+          <li><span class="x" aria-hidden="true">✖</span><span><b>Events silently dropped.</b> The "flagsmith" warehouse is Cloud-only, so self-hosted SDK events get a 404 and the experiment shows nothing.</span></li>
+          <li><span class="x" aria-hidden="true">✖</span><span><b>Admin exposed on your Wi-Fi.</b> Port 8000 binds to every interface.</span></li>
+          <li><span class="x" aria-hidden="true">✖</span><span><b>Default secrets.</b> <span class="mono">DJANGO_SECRET_KEY=secret</span>.</span></li>
+          <li><span class="x" aria-hidden="true">✖</span><span><b>CLI ignores your key.</b> Self-hosted hosts need a host-scoped variable.</span></li>
+          <li><span class="x" aria-hidden="true">✖</span><span><b><span class="mono">flagsmith eval</span> returns 405.</b> Wrong SDK URL shape.</span></li>
+        </ul>
+      </div>
+      <div class="term">
+        <div class="term-bar"><i></i><i></i><i></i><span>flagkit doctor --fix</span></div>
+<pre><span class="c-dim">EXPERIMENTATION</span>
+  <span class="c-bad">✖</span> Events are being DROPPED: this environment
+    does not store SDK events
+    <span class="c-acc">fix:</span> warehouse must be postgres +
+         {"source":"flagsmith_database"}
+<span class="c-dim">SECURITY</span>
+  <span class="c-bad">✖</span> Admin API is reachable from your network
+  <span class="c-bad">✖</span> Default secrets in running containers
+  <span class="c-warn">⚠</span> Open sign-up
+<span class="c-dim">CLI</span>
+  <span class="c-bad">✖</span> FLAGSMITH_API_KEY is ignored for this host
+
+<span class="c-bad">3 passed, 3 warnings, 6 failures</span>
+Apply 2 fixes? (y/N) y
+  <span class="c-ok">✔ fixed:</span> warehouse → Flagsmith database
+  <span class="c-ok">✔ fixed:</span> client traits locked</pre>
+      </div>
+    </section>
+
+    <section id="experiment" class="live">
+      <div>
+        <div class="kicker">This page is an experiment</div>
+        <h2>You're seeing <span class="variant" id="variant">…</span></h2>
+        <p class="sub" style="margin:0">FlagKit runs a live A/B test on its own headline with Flagsmith Experimentation. Hypothesis: the benefit-led headline gets more clicks on <b>Get early access</b>. Flagsmith's Bayesian engine decides the winner.</p>
+      </div>
+      <div class="arms">
+        <div class="arm" id="arm-control"><small>Control</small>Feature flags for modern teams</div>
+        <div class="arm" id="arm-benefit"><small>Variant · benefit</small>Ship on Friday. Roll back in one click.</div>
+      </div>
+    </section>
   </main>
+
+  <footer class="wrap">
+    <div class="row">
+      <span>FlagKit · MIT · built for the Flagsmith “Toggle Wars” hackathon</span>
+      <span>Privacy: a random anonymous ID, which headline you saw, and whether you clicked go to Flagsmith. No cookies, no personal data. Visitor <code id="vid" class="mono"></code></span>
+    </div>
+  </footer>
 
   <script src="./config.js"></script>
   <script type="module">
     import flagsmith from './sdk.mjs';
 
+    // The ONLY difference between the arms. Everything else on the page is identical.
     const HEADLINES = {
-      control: 'Feature flags for modern teams',
-      benefit: 'Ship on Friday. Roll back in one click.',
+      control: 'Feature flags for <span class="grad">modern teams</span>',
+      benefit: 'Ship on Friday. <span class="grad">Roll back in one click.</span>',
     };
     const cfg = window.FLAGKIT_CONFIG;
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // Anonymous visitors get a persistent ID so exposures and clicks join up per identity.
+    // ── terminal animation (decorative) ──
+    const LINES = [
+      ['c-cmd', '$ node bin/flagkit.js up'],
+      ['c-dim', '▶ Starting self-hosted Flagsmith…'],
+      ['c-dim', '▶ Bootstrapping…'],
+      ['c-ok', '  › admin, org, project'],
+      ['c-ok', '  › Development · Staging · Production'],
+      ['c-ok', '  › admin API key (host-scoped for the CLI)'],
+      ['c-ok', '  › experimentation warehouse ×3'],
+      ['c-ok', '  › sign-up locked · 127.0.0.1 · random secrets'],
+      ['c-acc', '✔ Flagsmith is ready in 28s'],
+      ['', ''],
+      ['c-cmd', '$ flagkit experiment results'],
+      ['c-dim', 'arm      users  conv   rate   lift  P(win)'],
+      ['', 'control    399    27   6.7%   base  -'],
+      ['c-ok', 'teal       401    74  18.4%   173%  100%'],
+    ];
+    const term = document.getElementById('term');
+    const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    const render = (n, partial = '') => {
+      term.innerHTML = LINES.slice(0, n).map(([c, t]) => `<span class="${c}">${esc(t)}</span>`).join('\n') +
+        (n < LINES.length ? `${n ? '\n' : ''}<span class="${LINES[n][0]}">${esc(partial)}</span><span class="cursor"></span>` : '\n<span class="cursor"></span>');
+    };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    if (reduced) render(LINES.length);
+    else (async () => {
+      for (let i = 0; i < LINES.length; i++) {
+        const text = LINES[i][1];
+        if (text.startsWith('$')) for (let j = 1; j <= text.length; j++) { render(i, text.slice(0, j)); await sleep(34); }
+        else { render(i + 1); await sleep(text ? 240 : 120); }
+      }
+      render(LINES.length);
+    })();
+
+    // ── identity: anonymous visitors get a persistent ID so exposures and clicks join up ──
     let id;
     try { id = localStorage.getItem('flagkit_vid'); } catch {}
     if (!id) {
@@ -60,6 +312,7 @@ npm install && node bin/flagkit.js up</pre>
     document.getElementById('vid').textContent = id.slice(0, 12);
 
     const h1 = document.getElementById('headline');
+    let variant = 'control';
     try {
       await flagsmith.init({
         environmentID: cfg.environmentID,
@@ -70,18 +323,21 @@ npm install && node bin/flagkit.js up</pre>
       });
       // Records the $flag_exposure event for enrolled visitors.
       const flag = flagsmith.getExperimentFlag(cfg.flag);
-      const variant = (flag?.enabled && flag?.variant) || 'control';
-      h1.textContent = HEADLINES[variant] || HEADLINES.control;
-      document.getElementById('variant').textContent = variant;
+      if (flag?.enabled && flag?.variant && Object.hasOwn(HEADLINES, flag.variant)) variant = flag.variant;
     } catch (e) {
       console.warn('Flagsmith unavailable, showing control', e);
-      h1.textContent = HEADLINES.control;
     }
+    h1.innerHTML = HEADLINES[variant];        // trusted constant strings only, never flag values
     h1.classList.remove('loading');
+    document.getElementById('variant').textContent = variant;
+    document.getElementById(`arm-${variant}`)?.classList.add('me');
 
+    let clicked = false;
     document.getElementById('signup').addEventListener('click', async () => {
+      document.getElementById('thanks').classList.add('show');
+      if (clicked) return;                      // one conversion per visit is enough
+      clicked = true;
       flagsmith.trackEvent(cfg.event);          // the conversion the metric counts
-      document.getElementById('thanks').textContent = 'Thanks! Your click was counted. (Demo only: no email or personal data is collected.)';
       await flagsmith.flushEvents();
     });
     addEventListener('pagehide', () => flagsmith.flushEvents());
