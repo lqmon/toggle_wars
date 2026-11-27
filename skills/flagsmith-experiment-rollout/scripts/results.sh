@@ -5,14 +5,20 @@ ID=${1:?experiment id}
 [[ $ID =~ ^[0-9]+$ ]] || { echo "experiment id must be a number"; exit 1; }
 : "${FLAGSMITH_ENVIRONMENT:?source flagsmith.env or set FLAGSMITH_ENVIRONMENT}"
 E="api/v1/environments/$FLAGSMITH_ENVIRONMENT/experiments/$ID"
+NOTE=""
 if [ "${2:-}" != "--no-refresh" ]; then
-  # ask for a recompute (Flagsmith allows one per 5 min), then wait up to ~20s for it to land
-  req=$(flagsmith api "$E/results/refresh/" -X POST --jq '.results.refresh_requested_at // .refresh_requested_at // empty' 2>/dev/null || true)
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    asof=$(flagsmith api "$E/results/" --jq '.results.as_of // ""')
-    [[ -z "$req" || ( -n "$asof" && ! "$asof" < "$req" ) ]] && break
-    sleep 2
-  done
+  # Flagsmith allows one recompute per 5 min. Say so instead of silently showing a stale snapshot.
+  since=$(date -u +%Y-%m-%dT%H:%M:%S)
+  out=$(flagsmith api "$E/results/refresh/" -X POST 2>&1 || true)
+  if [[ $out == *"Try again later"* ]]; then
+    NOTE="note: refresh rate-limited (next in $(grep -o 'in [0-9]* seconds' <<<"$out" | head -1 | tr -dc 0-9)s); showing results as of as_of above"
+  else
+    for _ in $(seq 1 15); do   # wait (≤30s) until results are newer than our request
+      asof=$(flagsmith api "$E/results/" --jq '.results.as_of // ""')
+      [[ -n "$asof" && ! "$asof" < "$since" ]] && break
+      sleep 2
+    done
+  fi
 fi
 flagsmith api "$E/" --jq '"#\(.id) \(.status): \(.name)"'
 flagsmith api "$E/results/" --jq '
@@ -24,3 +30,4 @@ flagsmith api "$E/results/" --jq '
       (if $v.key == "control" then "base\t-" elif $i then "\((100*$i.lift)|round)%\t\((100*$i.chance_to_win)|round)%" else "-\t(needs conversions)" end)),
     "as_of=\($r.as_of)" + (if ($r.payload.srm_p_value // 1) < 0.01 then " SRM=YES(do not trust)" else "" end)
   end'
+[ -z "$NOTE" ] || echo "$NOTE"
