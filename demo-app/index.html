@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!--CSP-->
+  <meta name="referrer" content="no-referrer" />
   <title>FlagKit — self-hosted Flagsmith in one command</title>
   <style>
     :root { --bg:#0b1020; --fg:#e8ecf8; --muted:#9aa4c2; --accent:#5eead4; --card:#131a33; }
@@ -33,6 +35,8 @@ npm install && node bin/flagkit.js up</pre>
     <footer>
       This page is a live A/B test run with Flagsmith Experimentation.
       You are visitor <code id="vid"></code>, seeing variation <code id="variant">…</code>.
+      <br />Privacy: only a random anonymous ID, which headline you saw and whether you clicked are sent to Flagsmith. No cookies, no personal data.
+      <a href="https://github.com/lqmon/toggle_wars" style="color:inherit">Source</a>.
     </footer>
   </main>
 
@@ -77,7 +81,7 @@ npm install && node bin/flagkit.js up</pre>
 
     document.getElementById('signup').addEventListener('click', async () => {
       flagsmith.trackEvent(cfg.event);          // the conversion the metric counts
-      document.getElementById('thanks').textContent = "Thanks! You're on the list.";
+      document.getElementById('thanks').textContent = 'Thanks! Your click was counted. (Demo only: no email or personal data is collected.)';
       await flagsmith.flushEvents();
     });
     addEventListener('pagehide', () => flagsmith.flushEvents());

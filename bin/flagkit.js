@@ -25,6 +25,8 @@ Experiments
   simulate           Send simulated visitors through an experiment
                      (--users 600 --env Development [--flag f --event e --rates control=0.08,teal=0.2])
   demo               Serve the sample landing page on http://localhost:3000
+  build-page         Build the landing page as a static site for public hosting
+                     (--env-key <client-side key> [--out docs] [--public-api-url https://…]; default Flagsmith Cloud)
 
 Dashboard
   tui                Terminal dashboard: flags across environments + live experiment results
@@ -64,6 +66,9 @@ const { values, positionals } = parseArgs({
     port: { type: 'string', default: '3000' },
     wipe: { type: 'boolean', default: false },
     'show-secrets': { type: 'boolean', default: false },
+    'env-key': { type: 'string' },
+    out: { type: 'string', default: 'docs' },
+    'public-api-url': { type: 'string' },
     'allow-remote': { type: 'boolean', default: false },
     env: { type: 'string', default: 'Development' },
     json: { type: 'boolean', default: false },
@@ -116,6 +121,11 @@ try {
     case 'demo': {
       const { serveDemo } = await import('../src/demo-server.js');
       serveDemo(requireState(), { port: Number(values.port), envName: values.env });
+      break;
+    }
+    case 'build-page': {
+      const { buildPage } = await import('../src/build-page.js');
+      buildPage({ envKey: values['env-key'], out: values.out, apiUrl: values['public-api-url'] });
       break;
     }
     case 'tui': {
