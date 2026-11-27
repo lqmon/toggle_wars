@@ -6,14 +6,16 @@ x-flagsmith-env: &flagsmith-env
   # API: https://docs.flagsmith.com/deployment/locally-api#environment-variables
   # UI: https://docs.flagsmith.com/deployment/locally-frontend#environment-variables
 
-  DATABASE_URL: postgresql://postgres:password@postgres:5432/flagsmith
+  # Secrets come from .flagkit/stack.env, generated per machine by `flagkit up` (never committed).
+  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?run flagkit up}@postgres:5432/flagsmith
   USE_POSTGRES_FOR_ANALYTICS: 'true' # Store API and Flag Analytics data in Postgres
   ENVIRONMENT: production # set to 'production' in production.
-  DJANGO_ALLOWED_HOSTS: '*' # Change this in production
-  FLAGSMITH_DOMAIN: localhost:8000 # Change this in production
-  DJANGO_SECRET_KEY: secret # Change this in production
-  WAREHOUSE_CREDENTIALS_SECRET: secret # Change this in production
-  # PREVENT_SIGNUP: 'true' # Uncomment to prevent any additional signups
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+  FLAGSMITH_DOMAIN: ${FLAGSMITH_DOMAIN:-localhost:8000}
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?run flagkit up}
+  WAREHOUSE_CREDENTIALS_SECRET: ${WAREHOUSE_CREDENTIALS_SECRET:?run flagkit up}
+  # Set to 'true' by `flagkit up` once the admin exists, so nobody else can register.
+  PREVENT_SIGNUP: ${PREVENT_SIGNUP:-false}
   # ALLOW_REGISTRATION_WITHOUT_INVITE: 'true' # Uncomment and set to false to only allow signups via invitations
 
   # Enable Task Processor
@@ -46,7 +48,7 @@ services:
     image: postgres:15.5-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run flagkit up}
       POSTGRES_DB: flagsmith
     container_name: flagsmith_postgres
     volumes:
@@ -78,7 +80,8 @@ services:
     environment:
       <<: *flagsmith-env
     ports:
-      - 8000:8000
+      # Loopback only: the admin dashboard/API are not reachable from your network.
+      - ${FLAGKIT_BIND:-127.0.0.1}:8000:8000
     depends_on:
       migrate-db:
         condition: service_completed_successfully
@@ -90,8 +93,6 @@ services:
     restart: unless-stopped
     environment:
       <<: *flagsmith-env
-    ports:
-      - 8001:8000
     depends_on:
       migrate-db:
         condition: service_completed_successfully

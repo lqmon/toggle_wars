@@ -2,6 +2,8 @@
 # Compact results table for an experiment. usage: results.sh <experiment_id> [--no-refresh]
 set -euo pipefail
 ID=${1:?experiment id}
+[[ $ID =~ ^[0-9]+$ ]] || { echo "experiment id must be a number"; exit 1; }
+: "${FLAGSMITH_ENVIRONMENT:?source flagsmith.env or set FLAGSMITH_ENVIRONMENT}"
 E="api/v1/environments/$FLAGSMITH_ENVIRONMENT/experiments/$ID"
 [ "${2:-}" = "--no-refresh" ] || flagsmith api "$E/results/refresh/" -X POST >/dev/null 2>&1 || true  # ≤ once / 5 min
 flagsmith api "$E/" --jq '"#\(.id) \(.status): \(.name)"'

@@ -1,18 +1,33 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 // State lives in the directory you run flagkit from, so each project gets its own stack.
 export const STATE_DIR = path.resolve(process.env.FLAGKIT_HOME || '.flagkit');
 export const STATE_FILE = path.join(STATE_DIR, 'state.json');
 export const ENV_FILE = path.resolve('flagsmith.env');
+export const STACK_ENV_FILE = path.join(STATE_DIR, 'stack.env');
+
+// Docker Compose secrets, generated once per machine. Never committed (.flagkit/ is gitignored).
+export function ensureStackSecrets() {
+  if (fs.existsSync(STACK_ENV_FILE)) return;
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  const rnd = (n) => crypto.randomBytes(n).toString('hex');
+  fs.writeFileSync(
+    STACK_ENV_FILE,
+    [`POSTGRES_PASSWORD=${rnd(24)}`, `DJANGO_SECRET_KEY=${rnd(32)}`, `WAREHOUSE_CREDENTIALS_SECRET=${rnd(32)}`, ''].join('\n'),
+    { mode: 0o600 },
+  );
+}
 
 export function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return null; }
 }
 
 export function saveState(state) {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  fs.chmodSync(STATE_FILE, 0o600);
 }
 
 export function requireState() {
@@ -52,4 +67,5 @@ export function writeEnvFile(state) {
     '',
   ];
   fs.writeFileSync(ENV_FILE, lines.join('\n'), { mode: 0o600 });
+  fs.chmodSync(ENV_FILE, 0o600);
 }

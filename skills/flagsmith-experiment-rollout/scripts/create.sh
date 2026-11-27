@@ -5,6 +5,12 @@ set -euo pipefail
 [ $# -eq 8 ] || { sed -n 3p "$0"; exit 1; }
 FLAG=$1 CONTROL=$2 EVENT=$3 METRIC=$4 NAME=$5 HYP=$6 ROLLOUT=$7
 IFS=, read -ra KEYS <<<"$8"
+# Names become API identifiers; keep them boring so they can't break out of anything.
+ok='^[a-z0-9][a-z0-9_-]{0,99}$'
+[[ $FLAG =~ $ok && $EVENT =~ $ok ]] || { echo "flag and event must match $ok"; exit 1; }
+for k in "${KEYS[@]}"; do [[ $k =~ $ok ]] || { echo "variant key '$k' must match $ok"; exit 1; }; done
+[[ $ROLLOUT =~ ^[0-9]+(\.[0-9]+)?$ ]] && (( ${ROLLOUT%.*} <= 100 )) || { echo "rollout must be 0-100"; exit 1; }
+: "${FLAGSMITH_ENVIRONMENT:?source flagsmith.env or set FLAGSMITH_ENVIRONMENT}"
 E="api/v1/environments/$FLAGSMITH_ENVIRONMENT"
 
 # 1. flag
@@ -21,7 +27,9 @@ done
 OPTS=$(flagsmith feature variant list "$FLAG" --json)
 
 # 3. metric
-MID=$(flagsmith api "$E/experiment-metrics/" --jq "(if type==\"array\" then . else .results end)[] | select(.name==\"$METRIC\") | .id" | head -1)
+LIST='(if type=="array" then . else .results end)[]'
+# values go to jq as --arg data, never spliced into the filter
+MID=$(flagsmith api "$E/experiment-metrics/" --json | jq -r --arg n "$METRIC" "$LIST | select(.name==\$n) | .id" | head -1)
 if [ -z "$MID" ]; then
   MID=$(jq -n --arg n "$METRIC" --arg e "$EVENT" '{name:$n, aggregation:"occurrence", direction:"up", definition:{version:1, event:$e}}' |
     flagsmith api "$E/experiment-metrics/" -X POST --input - --jq .id)
@@ -29,7 +37,7 @@ if [ -z "$MID" ]; then
 fi
 
 # 4. experiment (control gets the remainder of the split)
-EID=$(flagsmith api "$E/experiments/" --jq "(if type==\"array\" then . else .results end)[] | select(.name==\"$NAME\") | .id" | head -1)
+EID=$(flagsmith api "$E/experiments/" --json | jq -r --arg n "$NAME" "$LIST | select(.name==\$n) | .id" | head -1)
 if [ -z "$EID" ]; then
   SHARE=$(jq -n --argjson n "${#KEYS[@]}" '100 / ($n + 1)')
   KEYS_JSON=$(printf '%s\n' "${KEYS[@]}" | jq -R . | jq -s .)

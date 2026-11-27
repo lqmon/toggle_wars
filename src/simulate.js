@@ -4,7 +4,14 @@
 import { Flagsmith } from '@flagsmith/nodejs';
 import { envOf } from './experiment.js';
 
-export async function simulate(state, { users = 600, envName = 'Development', rates, flag, event, concurrency = 20 } = {}) {
+export async function simulate(state, { users = 600, envName = 'Development', rates, flag, event, concurrency = 20, allowRemote = false } = {}) {
+  // Simulated visitors must never be mixed into a real experiment's data.
+  const host = new URL(state.apiUrl).hostname;
+  if (!['localhost', '127.0.0.1', '::1'].includes(host) && !allowRemote) {
+    throw new Error(`Refusing to send simulated traffic to ${host}: it would pollute real experiment data. Pass --allow-remote if this is a throwaway environment.`);
+  }
+  if (/prod/i.test(envName) && !allowRemote) throw new Error('Refusing to simulate traffic in a production environment (pass --allow-remote to override).');
+  if (!Number.isInteger(users) || users < 1 || users > 100000) throw new Error('--users must be an integer between 1 and 100000');
   const env = envOf(state, envName);
   const exp = flag && event ? { flag, event } : state.experiments[env.name];
   if (!exp) throw new Error(`No experiment in ${env.name}. Run \`flagkit experiment create\` or pass --flag and --event.`);

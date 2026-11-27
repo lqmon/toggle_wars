@@ -29,7 +29,8 @@ export async function bootstrap({
     token = r.key;
     log(`created admin user ${email}`);
   } catch (e) {
-    if (e.status !== 400) throw e;
+    // 400: user exists; 401/403: sign-up disabled (PREVENT_SIGNUP) — all mean "log in instead"
+    if (![400, 401, 403].includes(e.status)) throw e;
   }
   if (!token) {
     try {
@@ -66,6 +67,12 @@ export async function bootstrap({
     }
   }
   envs = envs.filter((e) => environments.includes(e.name));
+  // We don't use client-set traits; leaving them on lets any visitor write traits with the public key.
+  for (const env of envs) {
+    if (env.allow_client_traits !== false) {
+      await api.patch(`environments/${env.api_key}/`, { allow_client_traits: false }).catch((e) => log(`warning: ${e.message}`));
+    }
+  }
 
   // 5. Master (admin) API key for the Flagsmith CLI / agents
   let masterKey = prev?.masterKey;

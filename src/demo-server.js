@@ -28,9 +28,18 @@ export function serveDemo(state, { port = 3000, envName = 'Development' } = {}) 
     .createServer((req, res) => {
       const route = routes[new URL(req.url, 'http://x').pathname];
       if (!route) { res.writeHead(404).end('not found'); return; }
-      res.writeHead(200, { 'Content-Type': route[0], 'Cache-Control': 'no-store' }).end(route[1]());
+      if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405).end(); return; }
+      res.writeHead(200, {
+        'Content-Type': `${route[0]}; charset=utf-8`,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+        'X-Frame-Options': 'DENY',
+        // Page may only talk to itself and the configured Flagsmith host.
+        'Content-Security-Policy': `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' ${new URL(state.apiUrl).origin}; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+      }).end(route[1]());
     })
-    .listen(port, () => {
+    .listen(port, '127.0.0.1', () => {
       console.log(`✔ Demo landing page on http://localhost:${port}  (environment ${env.name}, flag "${config.flag}")`);
       console.log('  Each new browser profile / private window is a new visitor. Ctrl+C to stop.');
     });

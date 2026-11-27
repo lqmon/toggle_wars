@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootstrap } from '../src/bootstrap.js';
-import { loadState, requireState, ENV_FILE } from '../src/config.js';
+import { loadState, requireState, ENV_FILE, ensureStackSecrets, STACK_ENV_FILE } from '../src/config.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = path.join(ROOT, 'stack', 'docker-compose.yml');
@@ -34,8 +34,12 @@ Options
   --project <name>   Compose project name (default flagkit)
 `;
 
-function compose(args, project) {
-  const r = spawnSync('docker', ['compose', '-p', project, '-f', COMPOSE, ...args], { stdio: 'inherit' });
+function compose(args, project, extraEnv = {}) {
+  ensureStackSecrets(); // random per-machine DB password + Django secrets, 0600, gitignored
+  const r = spawnSync('docker', ['compose', '-p', project, '-f', COMPOSE, '--env-file', STACK_ENV_FILE, ...args], {
+    stdio: 'inherit',
+    env: { ...process.env, ...extraEnv },
+  });
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
@@ -43,7 +47,7 @@ function printStatus(s) {
   const dash = s.apiUrl;
   console.log(`
   Flagsmith      ${dash}
-  Login          ${s.admin.email} / ${s.admin.password}
+  Login          ${s.admin.email} / ${values['show-secrets'] ? s.admin.password : '•••••• (in flagsmith.env, or --show-secrets)'}
   Project        ${s.project.name} (id ${s.project.id})
   Environments   ${s.environments.map((e) => `${e.name}=${e.api_key}`).join('  ')}
   CLI creds      source ${path.relative(process.cwd(), ENV_FILE) || ENV_FILE}
@@ -59,6 +63,8 @@ const { values, positionals } = parseArgs({
     users: { type: 'string', default: '600' },
     port: { type: 'string', default: '3000' },
     wipe: { type: 'boolean', default: false },
+    'show-secrets': { type: 'boolean', default: false },
+    'allow-remote': { type: 'boolean', default: false },
     env: { type: 'string', default: 'Development' },
     json: { type: 'boolean', default: false },
     flag: { type: 'string' },
@@ -74,10 +80,12 @@ try {
   switch (cmd) {
     case 'up': {
       console.log('▶ Starting self-hosted Flagsmith (Postgres, API + dashboard, task processor)…');
-      compose(['up', '-d'], values.project);
+      compose(['up', '-d'], values.project, { PREVENT_SIGNUP: loadState() ? 'true' : 'false' });
       console.log('▶ Bootstrapping (admin, org, project, environments, API key, experimentation)…');
       const s = await bootstrap({ apiUrl: values['api-url'], email: values.email });
-      console.log('✔ Flagsmith is ready.');
+      console.log('▶ Locking sign-up now that the admin exists…');
+      compose(['up', '-d', '--wait', 'flagsmith', 'flagsmith-task-processor'], values.project, { PREVENT_SIGNUP: 'true' });
+      console.log('✔ Flagsmith is ready (bound to 127.0.0.1, sign-up disabled).');
       printStatus(s);
       console.log('  Next:  flagkit experiment create  →  flagkit simulate  →  flagkit tui\n');
       break;
@@ -102,7 +110,7 @@ try {
     }
     case 'simulate': {
       const { simulate } = await import('../src/simulate.js');
-      await simulate(requireState(), { users: Number(values.users), envName: values.env, flag: values.flag, event: values.event, rates: values.rates });
+      await simulate(requireState(), { users: Number(values.users), envName: values.env, flag: values.flag, event: values.event, rates: values.rates, allowRemote: values['allow-remote'] });
       break;
     }
     case 'demo': {
