@@ -57,7 +57,7 @@ function dockerEnv() {
   });
 }
 
-export async function runDoctor({ apiUrl, envKey, adminKey, fix = false, yes = false, json = false } = {}) {
+export async function runDoctor({ apiUrl, envKey, adminKey, fix = false, yes = false, json = false, quiet = false } = {}) {
   apiUrl = (apiUrl || process.env.FLAGSMITH_API_URL || 'http://localhost:8000').replace(/\/+$/, '').replace(/\/api\/v1$/, '');
   envKey ||= process.env.FLAGSMITH_ENVIRONMENT || process.env.FLAGSMITH_ENVIRONMENT_KEY;
   adminKey ||= process.env[cliKeyVar(apiUrl)] || process.env.FLAGSMITH_API_KEY;
@@ -73,7 +73,7 @@ export async function runDoctor({ apiUrl, envKey, adminKey, fix = false, yes = f
   const health = await probe(`${apiUrl}/health`);
   if (health.status !== 200) {
     add('Reachability', 'fail', `Flagsmith not reachable at ${apiUrl}`, health.error || `HTTP ${health.status}`, 'Start it (`flagkit up`) or pass --api-url');
-    return report(results, { json, apiUrl });
+    return quiet ? { code: 1, results, fixable: 0 } : report(results, { json, apiUrl });
   }
   add('Reachability', 'pass', `API healthy at ${apiUrl}`);
   if (isCloud(apiUrl)) add('Reachability', 'skip', 'Flagsmith Cloud detected: self-hosting checks skipped');
@@ -193,6 +193,7 @@ export async function runDoctor({ apiUrl, envKey, adminKey, fix = false, yes = f
     }
   } else add('Admin', 'skip', 'No Admin API key: warehouse, traits and experiment checks skipped', '', `Set ${scoped} (or source flagsmith.env)`);
 
+  if (quiet) return { code: results.some((r) => r.status === 'fail') ? 1 : 0, results, fixable: fixes.length };
   const code = report(results, { json, apiUrl });
 
   if (fix && fixes.length) {
