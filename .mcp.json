@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "flagkit": {
+      "command": "node",
+      "args": ["bin/flagkit.js", "mcp"]
+    }
+  }
+}

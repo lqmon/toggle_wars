@@ -70,6 +70,9 @@ jobs:
           $S/rollout.sh "$id" cta_color teal | tee rollout.txt
           grep -q 'eval: 5/5 -> teal' rollout.txt
 
+      - name: MCP server (agent proposes, nothing applied without a human)
+        run: node test/mcp-smoke.mjs
+
       - name: Security posture
         run: |
           # admin API must not be reachable on the runner's non-loopback address

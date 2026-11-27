@@ -33,7 +33,13 @@ Experiments
                      (--env-key <client-side key> [--out docs] [--public-api-url https://…]; default Flagsmith Cloud)
 
 Dashboard
-  tui                Terminal dashboard: flags across environments + live experiment results
+  tui                Terminal dashboard: flags × environments, experiments, doctor, approvals
+
+Agents
+  mcp                MCP server (stdio) for coding agents: read tools + change PROPOSALS only
+  approvals [--all]  List change requests filed by agents
+  approve <id>       Apply a request (interactive terminal only; type the id to confirm)
+  reject <id>        Reject a request
 
 Options
   --api-url <url>    Flagsmith URL (default http://localhost:8000)
@@ -71,6 +77,7 @@ const { values, positionals } = parseArgs({
     wipe: { type: 'boolean', default: false },
     'show-secrets': { type: 'boolean', default: false },
     fix: { type: 'boolean', default: false },
+    all: { type: 'boolean', default: false },
     yes: { type: 'boolean', default: false },
     'env-key': { type: 'string' },
     out: { type: 'string', default: 'docs' },
@@ -143,6 +150,36 @@ try {
         adminKey: process.env.FLAGSMITH_ADMIN_KEY || st?.masterKey,
         fix: values.fix, yes: values.yes, json: values.json,
       });
+      break;
+    }
+    case 'mcp': {
+      const { runMcp } = await import('../src/mcp.js');
+      await runMcp(requireState());
+      break;
+    }
+    case 'approvals': {
+      const { listChanges } = await import('../src/approvals.js');
+      const rows = listChanges(values.all ? undefined : 'pending');
+      if (!rows.length) console.log(values.all ? 'No change requests.' : 'No pending change requests. (--all to see history)');
+      for (const c of rows) console.log(`${c.id}  ${c.status.padEnd(8)} ${c.risk === 'high' ? '⚠ PROD ' : ''}${c.summary}\n           before: ${c.before}  →  after: ${c.after}\n           reason: ${c.reason}${c.result ? `\n           result: ${c.result}` : ''}`);
+      break;
+    }
+    case 'approve':
+    case 'reject': {
+      const { getChange, approveChange, rejectChange } = await import('../src/approvals.js');
+      const id = sub;
+      const c = id && getChange(id);
+      if (!c) throw new Error(`Usage: flagkit ${cmd} <change id>  (see \`flagkit approvals\`)`);
+      // Approval is a human act: require an interactive terminal and a typed confirmation.
+      if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error(`${cmd} needs an interactive terminal (a person, not a script or agent).`);
+      console.log(`\n${c.id}  ${c.risk === 'high' ? '⚠ PRODUCTION  ' : ''}${c.summary}\n  before: ${c.before}\n  after:  ${c.after}\n  reason: ${c.reason}\n  requested by: ${c.requestedBy} at ${c.createdAt}\n`);
+      const readline = await import('node:readline/promises');
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const typed = (await rl.question(`Type the change id to ${cmd} it: `)).trim();
+      rl.close();
+      if (typed !== c.id) { console.log('Not confirmed. Nothing changed.'); break; }
+      const done = cmd === 'approve' ? await approveChange(requireState(), c.id) : rejectChange(c.id);
+      console.log(`${done.status === 'applied' ? '✔' : done.status === 'rejected' ? '✖ rejected' : '✖ failed'}  ${done.result || ''}`);
       break;
     }
     case 'tui': {

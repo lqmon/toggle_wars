@@ -2,11 +2,13 @@
 //   1 Flags        every flag × every environment, search, drift markers, guarded toggles
 //   2 Experiments  every experiment in every environment, live Bayesian results, guarded "ship the winner"
 //   3 Doctor       live health: silent event loss, security posture, CLI/SDK config
+//   4 Approvals    changes proposed by agents (MCP) — nothing is applied until a person approves here
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { render, Box, Text, useInput, useApp, useStdout } from 'ink';
 import { adminOf } from './experiment.js';
 import { summarise } from './results.js';
 import { runDoctor } from './doctor.js';
+import { listChanges, approveChange, rejectChange } from './approvals.js';
 
 const h = React.createElement;
 const valueOf = (v) => (v && typeof v === 'object' ? v.string_value ?? v.integer_value ?? v.boolean_value : v);
@@ -15,7 +17,7 @@ const bar = (p, w = 18) => {
   const n = Math.max(0, Math.min(w, Math.round((p ?? 0) * w)));
   return '█'.repeat(n) + '░'.repeat(w - n);
 };
-const TABS = [['flags', '1 Flags'], ['exp', '2 Experiments'], ['doctor', '3 Doctor']];
+const TABS = [['flags', '1 Flags'], ['exp', '2 Experiments'], ['doctor', '3 Doctor'], ['appr', '4 Approvals']];
 const ICON = { pass: ['✔', 'green'], warn: ['⚠', 'yellow'], fail: ['✖', 'red'], skip: ['·', 'gray'] };
 
 function useFlags(state, api) {
@@ -71,6 +73,13 @@ function App({ state }) {
   const [msg, setMsg] = useState('');
   const [confirm, setConfirm] = useState(null);
   const [healthy, setHealthy] = useState(null);
+  const [changes, setChanges] = useState([]);
+  const [apRow, setApRow] = useState(0);
+  useEffect(() => {
+    const load = () => setChanges(listChanges().sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || b.createdAt.localeCompare(a.createdAt)));
+    load(); const t = setInterval(load, 2000); return () => clearInterval(t);
+  }, []);
+  const pending = changes.filter((c) => c.status === 'pending');
 
   useEffect(() => { reloadFlags(); const t = setInterval(reloadFlags, 5000); return () => clearInterval(t); }, []);
   useEffect(() => { reloadExps(); const t = setInterval(() => reloadExps(), 15000); return () => clearInterval(t); }, []);
@@ -126,7 +135,12 @@ function App({ state }) {
   useInput((input, key) => {
     if (confirm) {
       const c = confirm; setConfirm(null);
-      if (input === 'y') c.type === 'toggle' ? toggle(true) : shipWinner(c.exp, c.winner);
+      if (input === 'y') {
+        if (c.type === 'toggle') toggle(true);
+        else if (c.type === 'ship') shipWinner(c.exp, c.winner);
+        else if (c.type === 'approve') approveChange(state, c.id).then((r) => { setMsg(`${r.status === 'applied' ? '✔ applied' : '✖ failed'} ${c.id}: ${r.result}`); setChanges(listChanges()); reloadFlags(); reloadExps(); }).catch((e) => setMsg(`✖ ${e.message}`));
+        else if (c.type === 'reject') { try { rejectChange(c.id); setMsg(`rejected ${c.id}`); setChanges(listChanges()); } catch (e) { setMsg(`✖ ${e.message}`); } }
+      }
       else setMsg('cancelled: nothing changed');
       return;
     }
@@ -140,7 +154,7 @@ function App({ state }) {
     if (key.escape) setQuery('');
     const idx = TABS.findIndex(([k]) => k === tab);
     if (key.tab) setTab(TABS[(idx + (key.shift ? TABS.length - 1 : 1)) % TABS.length][0]);
-    if (['1', '2', '3'].includes(input)) setTab(TABS[Number(input) - 1][0]);
+    if (['1', '2', '3', '4'].includes(input)) setTab(TABS[Number(input) - 1][0]);
     if (tab === 'flags') {
       if (key.upArrow) setRow((r) => Math.max(0, r - 1));
       if (key.downArrow) setRow((r) => Math.min(shown.length - 1, r + 1));
@@ -158,12 +172,19 @@ function App({ state }) {
         else setConfirm({ type: 'ship', exp: selExp, winner: best.key, text: `End #${selExp.id} and roll out "${best.key}" (${pct(best.win)} chance to win) to ALL of ${selExp.env.name}?` });
       }
     } else if (tab === 'doctor' && input === 'r') runDoc();
+    else if (tab === 'appr') {
+      const sel = changes[apRow];
+      if (key.upArrow) setApRow((r) => Math.max(0, r - 1));
+      if (key.downArrow) setApRow((r) => Math.min(changes.length - 1, r + 1));
+      if (sel?.status === 'pending' && input === 'a') setConfirm({ type: 'approve', id: sel.id, text: `APPLY ${sel.id}: ${sel.summary}?${sel.risk === 'high' ? ' (PRODUCTION)' : ''}` });
+      if (sel?.status === 'pending' && input === 'x') setConfirm({ type: 'reject', id: sel.id, text: `Reject ${sel.id}?` });
+    }
   });
 
   // ── header ──
   const header = h(Box, { borderStyle: 'round', borderColor: 'cyan', paddingX: 1, justifyContent: 'space-between', width },
     h(Text, null, h(Text, { bold: true, color: 'cyan' }, '⚑ flagkit '), h(Text, { color: healthy == null ? 'gray' : healthy ? 'green' : 'red' }, healthy == null ? '○' : '●'), h(Text, { dimColor: true }, ` ${state.project.name} · ${state.apiUrl}`)),
-    h(Text, null, ...TABS.flatMap(([k, label]) => [h(Text, { key: k, inverse: tab === k, color: tab === k ? 'cyan' : undefined, bold: tab === k }, ` ${label} `), ' '])),
+    h(Text, null, ...TABS.flatMap(([k, label]) => [h(Text, { key: k, inverse: tab === k, color: tab === k ? 'cyan' : k === 'appr' && pending.length ? 'yellow' : undefined, bold: tab === k || (k === 'appr' && pending.length > 0) }, ` ${label}${k === 'appr' && pending.length ? ` (${pending.length})` : ''} `), ' '])),
   );
 
   let body;
@@ -224,6 +245,22 @@ function App({ state }) {
         h(Text, { dimColor: true }, `as of ${selExp.summary.asOf ?? 'never'} · ${state.apiUrl}/project/${state.project.id}/environment/${selExp.env.api_key}/experiments/${selExp.id}`),
       ) : null,
     );
+  } else if (tab === 'appr') {
+    const sel = changes[Math.min(apRow, Math.max(0, changes.length - 1))];
+    const color = { pending: 'yellow', applied: 'green', rejected: 'gray', failed: 'red' };
+    body = h(Box, { flexDirection: 'column', paddingX: 1 },
+      changes.length === 0 ? h(Text, { dimColor: true }, 'No change requests. Agents file them through the MCP server (`flagkit mcp`) → flagkit_propose_change.') : null,
+      ...changes.slice(0, 12).map((c, i) => h(Text, { key: c.id, bold: i === apRow, color: i === apRow ? 'cyan' : undefined },
+        `${i === apRow ? '› ' : '  '}${c.id}  `, h(Text, { color: color[c.status] }, c.status.padEnd(9)), c.risk === 'high' ? h(Text, { color: 'red' }, 'PROD ') : '     ', c.summary.slice(0, width - 34))),
+      sel ? h(Box, { flexDirection: 'column', marginTop: 1, borderStyle: 'single', borderColor: sel.status === 'pending' ? 'yellow' : 'gray', paddingX: 1, width: width - 2 },
+        h(Text, { bold: true }, sel.summary),
+        h(Text, null, h(Text, { dimColor: true }, 'before  '), sel.before),
+        h(Text, null, h(Text, { dimColor: true }, 'after   '), h(Text, { color: 'cyan' }, sel.after)),
+        h(Text, { wrap: 'wrap' }, h(Text, { dimColor: true }, 'reason  '), sel.reason),
+        h(Text, { dimColor: true }, `requested by ${sel.requestedBy} · ${sel.createdAt}${sel.decidedBy ? ` · decided by ${sel.decidedBy}` : ''}`),
+        sel.result ? h(Text, { color: color[sel.status] }, `→ ${sel.result}`) : null,
+      ) : null,
+    );
   } else {
     const order = ['Reachability', 'Security', 'Experimentation', 'SDK', 'CLI', 'Admin'];
     const rows = [...(doctor?.results || [])].sort((a, b) => order.indexOf(a.section) - order.indexOf(b.section));
@@ -246,11 +283,12 @@ function App({ state }) {
     flags: '↑↓←→ move  space toggle  / search  r reload',
     exp: '↑↓ select  r refresh results  s ship winner',
     doctor: 'r re-run checks',
+    appr: '↑↓ select  a approve & apply  x reject',
   }[tab];
   const footer = h(Box, { flexDirection: 'column', paddingX: 1, marginTop: 1 },
     confirm ? h(Box, { borderStyle: 'round', borderColor: 'yellow', paddingX: 1 }, h(Text, { color: 'yellow', bold: true }, `⚠ ${confirm.text}  `), h(Text, null, '[y] yes  [any key] cancel')) : null,
     error ? h(Text, { color: 'red' }, `✖ ${error}`) : msg ? h(Text, { color: msg.startsWith('✖') ? 'red' : 'magenta' }, msg) : null,
-    h(Text, { dimColor: true }, `${hints}  ·  tab/1-3 switch  ·  q quit`),
+    h(Text, { dimColor: true }, `${hints}  ·  tab/1-4 switch  ·  q quit`),
   );
 
   return h(Box, { flexDirection: 'column' }, header, body, footer);

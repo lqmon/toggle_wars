@@ -68,33 +68,38 @@ export async function ensureMetric(api, envKey, { name, event, description }) {
   return m;
 }
 
-export async function createDemoExperiment(state, { envName = 'Development', rollout = 100 } = {}) {
+// Generic: flag + keyed variants + metric + experiment, started unless start=false. Idempotent by name.
+export async function createExperiment(state, {
+  envName = 'Development', rollout = 100, start = true, track = false,
+  flag, control = 'control', variants, event, metricName, name, hypothesis, description,
+}) {
   const api = adminOf(state);
   const env = envOf(state, envName);
-  const { feature, options } = await ensureFeature(api, state.project.id, { ...DEMO, description: 'FlagKit demo: landing page headline' });
-  const metric = await ensureMetric(api, env.api_key, { name: DEMO.metricName, event: DEMO.event, description: 'Visitors who click Sign up' });
+  const vs = variants.map((v) => (typeof v === 'string' ? { key: v, value: v } : v));
+  const { feature, options } = await ensureFeature(api, state.project.id, { flag, control, variants: vs, description: description || `Experiment: ${name}` });
+  const metric = await ensureMetric(api, env.api_key, { name: metricName || `${event} rate`, event, description: `Identities that fire ${event}` });
 
-  let exp = (await api.list(`environments/${env.api_key}/experiments/`)).find((e) => e.name === DEMO.name);
+  let exp = (await api.list(`environments/${env.api_key}/experiments/`)).find((e) => e.name === name);
   if (!exp) {
-    const share = 100 / (DEMO.variants.length + 1);
+    const share = 100 / (vs.length + 1);
     exp = await api.post(`environments/${env.api_key}/experiments/`, {
       feature: feature.id,
-      name: DEMO.name,
-      hypothesis: DEMO.hypothesis,
+      name,
+      hypothesis,
       metrics: [{ metric: String(metric.id), expected_direction: 'increase' }],
       experiment_rollout: {
         enabled: true,
         rollout_percentage: rollout,
-        feature_state_value: { type: 'string', value: DEMO.control },
-        multivariate_feature_state_values: DEMO.variants.map((v) => ({
+        feature_state_value: { type: 'string', value: control },
+        multivariate_feature_state_values: vs.map((v) => ({
           multivariate_feature_option: options.find((o) => o.key === v.key).id,
           percentage_allocation: share,
         })),
       },
     });
-    console.log(`  › created experiment #${exp.id} "${DEMO.name}"`);
+    console.log(`  › created experiment #${exp.id} "${name}"`);
   }
-  if (exp.status !== 'running') {
+  if (start && exp.status !== 'running') {
     try {
       exp = await api.post(`environments/${env.api_key}/experiments/${exp.id}/start/`);
       console.log(`  › started experiment #${exp.id}`);
@@ -102,11 +107,39 @@ export async function createDemoExperiment(state, { envName = 'Development', rol
       console.log(`  › could not start yet: ${e.message}`);
     }
   }
-  state.experiments[env.name] = { id: exp.id, flag: DEMO.flag, event: DEMO.event };
-  saveState(state);
+  if (track) {
+    state.experiments[env.name] = { id: exp.id, flag, event };
+    saveState(state);
+  }
+  return exp;
+}
+
+export async function createDemoExperiment(state, { envName = 'Development', rollout = 100 } = {}) {
+  const env = envOf(state, envName);
+  const exp = await createExperiment(state, {
+    envName, rollout, track: true,
+    flag: DEMO.flag, control: DEMO.control, variants: DEMO.variants, event: DEMO.event,
+    metricName: DEMO.metricName, name: DEMO.name, hypothesis: DEMO.hypothesis, description: 'FlagKit demo: landing page headline',
+  });
   console.log(`\n✔ Experiment #${exp.id} is ${exp.status}.`);
   console.log(`  Dashboard: ${state.apiUrl}/project/${state.project.id}/environment/${env.api_key}/experiments/${exp.id}\n`);
   return exp;
+}
+
+// End an experiment and let Flagsmith roll the decision out to 100% of the environment.
+export async function completeExperiment(state, { envName, experimentId, winner }) {
+  const api = adminOf(state);
+  const env = envOf(state, envName);
+  const exp = await api.get(`environments/${env.api_key}/experiments/${experimentId}/`);
+  let body = { rollout_decision: 'control' };
+  if (winner === 'disable') body = { rollout_decision: 'disable' };
+  else if (winner !== 'control') {
+    const opts = await api.list(`projects/${state.project.id}/features/${exp.feature}/mv-options/`);
+    const opt = opts.find((o) => o.key === winner);
+    if (!opt) throw new Error(`No variant "${winner}" on experiment #${experimentId}`);
+    body = { rollout_decision: 'variant', rollout_variant: opt.id };
+  }
+  return api.post(`environments/${env.api_key}/experiments/${experimentId}/complete/`, body);
 }
 
 export async function getResults(state, { envName = 'Development', refresh = true } = {}) {
