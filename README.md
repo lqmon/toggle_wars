@@ -77,6 +77,16 @@ Run with --fix to repair 2 issue(s) (asks before changing anything).
 - Needs **no credentials** for the public probes. Add `--env-key` for SDK and events checks, or an admin key for warehouse, traits and experiment health (sample ratio mismatch, "running but no exposures").
 - `--fix` repairs API-level issues **after asking**. `--json` and exit code 1 on failures make it a **CI gate**.
 
+**As a GitHub Action**, for any repo talking to a self-hosted Flagsmith:
+```yaml
+- uses: lqmon/toggle_wars/doctor@main
+  with:
+    api-url: https://flags.example.internal
+    environment-key: ${{ vars.FLAGSMITH_ENV_KEY }}      # optional: SDK + events checks
+    admin-key: ${{ secrets.FLAGSMITH_ADMIN_KEY }}       # optional: warehouse + experiment health
+```
+It fails the job on failures, exposes `failures`/`warnings` outputs, and writes a table to the job summary.
+
 ## 🖥 `flagkit tui`
 
 Four tabs:
@@ -111,6 +121,9 @@ human → TUI → 4 Approvals (1) → a → y
 ## 📜 Track 04: Agent Skill
 
 [`skills/flagsmith-experiment-rollout`](skills/flagsmith-experiment-rollout/) takes an agent through preflight → design → create → instrument → start → monitor → **roll out the winner** → cleanup PR → archive, all with the Flagsmith CLI. It stops at 5 approval gates, rolls out through Flagsmith's own experiment-complete decision, verifies with `flagsmith eval`, and prints a rollback command. **A full measured run reads about 130 tokens of tool output.** [Token table and real transcript →](skills/flagsmith-experiment-rollout/README.md)
+`scripts/stale.sh` handles the flag-debt side: finished or decided flags plus their remaining code references.
+
+**Tested with a real agent:** a headless Claude Code session took the [sample sign-up app](examples/signup-app) from one sentence ("prove three fields beat six") through all 5 gates to a rolled-out winner and a cleanup commit, for $0.80. The run exposed 5 real problems (sandboxed agents can't run `$VAR` commands, an API shape change, a refresh race…), all now fixed. [What happened →](examples/agent-run/README.md)
 
 ## 🧪 Track 01: a real experiment
 

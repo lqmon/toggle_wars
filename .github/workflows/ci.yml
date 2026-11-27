@@ -22,6 +22,8 @@ jobs:
       - run: node --test test/*.test.js
       - name: Lint skill scripts
         run: bash -n skills/*/scripts/*.sh
+      - name: Validate skill against the Agent Skills spec
+        run: pipx run --spec "git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref" skills-ref validate skills/flagsmith-experiment-rollout
 
   # Boots real self-hosted Flagsmith on a fresh runner and runs the whole journey.
   e2e:
@@ -42,6 +44,11 @@ jobs:
         run: |
           source flagsmith.env
           node bin/flagkit.js doctor
+
+      - name: Doctor as a GitHub Action (the reusable lqmon/toggle_wars/doctor action)
+        uses: ./doctor
+        with:
+          api-url: http://localhost:8000
 
       - name: Demo experiment + simulated traffic
         run: |

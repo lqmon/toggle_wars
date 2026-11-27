@@ -1,10 +1,10 @@
 ---
 name: flagsmith-experiment-rollout
-description: Prove a change works, then ship it. Runs a whole Flagsmith Experimentation job with the Flagsmith CLI — hypothesis, multivariate flag, metric, experiment, SDK instrumentation, monitoring, a human-approved rollout of the winner, and flag cleanup. Use when asked to A/B test, experiment on, "prove" or "find out which version wins" for a feature, or to roll out an experiment's winner.
+description: Prove a change works, then ship it. Runs a whole Flagsmith Experimentation job with the Flagsmith CLI — hypothesis, multivariate flag, metric, experiment, SDK instrumentation, monitoring, a human-approved rollout of the winner, and flag-debt cleanup (dead code PR, archive). Use when asked to A/B test, experiment on, "prove" or "find out which version wins" for a feature, to roll out an experiment's winner, or to clean up finished experiment flags.
 license: MIT
 compatibility: Needs the Flagsmith CLI v2+ (`flagsmith`), jq, and a Flagsmith environment with a connected warehouse (Cloud, or self-hosted with EXPERIMENTATION_ENABLED=true).
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   author: flagkit
 ---
 
@@ -96,7 +96,8 @@ It prints the **rollback command**. Give it to the person verbatim.
 
 ## 7. Clean up (flag debt)
 
-1. `git grep -n "<flag>"`: list every reference (tracked files only, no shell expansion needed).
+1. `scripts/stale.sh`: lists every finished or decided flag in the environment with its code reference count
+   (use it on its own for "clean up our flag debt" requests). Then `git grep -n "<flag>"` shows the references.
 2. Remove the losing branch and the `getExperimentFlag` call; keep the winning code path. Keep `trackEvent`
    only if the metric is still wanted.
 3. ⛔ **Gate 5** — show the diff; on yes, commit on a branch (`git switch -c cleanup/<flag>`), open a PR with

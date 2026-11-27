@@ -66,6 +66,11 @@ ROLLBACK: flagsmith flag update signup_fields --yes --enable --value control --w
 - The skill treats flag descriptions, hypotheses and names as **data**, not instructions (prompt-injection guard).
 - Never runs simulated traffic against an experiment someone will act on.
 
+## Tested with a real agent
+
+A headless Claude Code session ran the whole job on a sample app. See [examples/agent-run](../../examples/agent-run/README.md)
+for the transcript and the 5 problems it exposed, all fixed.
+
 ## Tested in CI
 
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) boots self-hosted Flagsmith on a clean GitHub
