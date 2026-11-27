@@ -1,7 +1,7 @@
 {
   "name": "flagkit",
   "version": "0.1.0",
-  "description": "Self-hosted Flagsmith + Experimentation in one command: zero-click bootstrap, a terminal dashboard, a sample A/B test and an agent skill.",
+  "description": "Self-hosted Flagsmith + Experimentation in one command: zero-click bootstrap, a doctor that finds silent breakage, a terminal dashboard, an MCP server and an agent skill.",
   "type": "module",
   "bin": {
     "flagkit": "bin/flagkit.js"
@@ -17,7 +17,9 @@
     "node": ">=20"
   },
   "scripts": {
+    "test": "node --test test/",
     "up": "node bin/flagkit.js up",
+    "doctor": "node bin/flagkit.js doctor",
     "tui": "node bin/flagkit.js tui"
   },
   "license": "MIT",

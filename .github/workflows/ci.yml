@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test test/
+      - name: Lint skill scripts
+        run: bash -n skills/*/scripts/*.sh
+
+  # Boots real self-hosted Flagsmith on a fresh runner and runs the whole journey.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: flagkit up (zero-click self-hosted Flagsmith + Experimentation)
+        run: time node bin/flagkit.js up
+
+      - name: flagkit doctor (must report 0 failures)
+        run: |
+          source flagsmith.env
+          node bin/flagkit.js doctor
+
+      - name: Demo experiment + simulated traffic
+        run: |
+          node bin/flagkit.js experiment create
+          node bin/flagkit.js simulate --users 300
+          node bin/flagkit.js experiment results
+
+      - name: Install Flagsmith CLI
+        run: |
+          curl -fsSL https://get.flagsmith.com | sh -s -- --no-modify-path
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Agent Skill end to end (create → start → results → rollout → verify)
+        run: |
+          source flagsmith.env
+          export FLAGSMITH_ENVIRONMENT=$FLAGSMITH_ENV_STAGING
+          S=skills/flagsmith-experiment-rollout/scripts
+          $S/preflight.sh
+          out=$($S/create.sh cta_color control cta_click "CTA click rate" "CTA colour test" "Teal beats grey" 100 teal)
+          echo "$out"
+          id=$(echo "$out" | sed -n 's/^experiment_id=\([0-9]*\).*/\1/p')
+          flagsmith api "api/v1/environments/$FLAGSMITH_ENVIRONMENT/experiments/$id/start/" -X POST --jq .status
+          node bin/flagkit.js simulate --env Staging --flag cta_color --event cta_click --rates control=0.08,teal=0.2 --users 400
+          sleep 5
+          $S/results.sh "$id"
+          $S/rollout.sh "$id" cta_color teal | tee rollout.txt
+          grep -q 'eval: 5/5 -> teal' rollout.txt
+
+      - name: Security posture
+        run: |
+          # admin API must not be reachable on the runner's non-loopback address
+          ip=$(hostname -I | awk '{print $1}')
+          ! curl -fs -m 3 "http://$ip:8000/health"
+          # sign-up must be closed
+          code=$(curl -s -o /dev/null -w '%{http_code}' -XPOST -H 'Content-Type: application/json' -d '{}' localhost:8000/api/v1/auth/users/)
+          test "$code" != 400
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -p flagkit -f stack/docker-compose.yml --env-file .flagkit/stack.env logs --tail 200

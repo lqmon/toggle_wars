@@ -62,7 +62,7 @@ export async function simulate(state, { users = 600, envName = 'Development', ra
 }
 
 // "control=0.08,teal=0.2" -> { control: 0.08, teal: 0.2 }
-function parseRates(r) {
+export function parseRates(r) {
   if (!r || typeof r === 'object') return r || {};
   return Object.fromEntries(r.split(',').map((kv) => kv.split('=')).map(([k, v]) => [k.trim(), Number(v)]));
 }

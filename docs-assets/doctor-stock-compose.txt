@@ -1,0 +1,39 @@
+
+flagkit doctor — http://localhost:8100
+
+REACHABILITY
+  ✔ API healthy at http://localhost:8100
+SECURITY
+  ⚠ Open sign-up: anyone who can reach this URL can create an account
+      fix: Set PREVENT_SIGNUP=true on the API (flagkit does this after bootstrap)
+  ⚠ DJANGO_ALLOWED_HOSTS accepts any Host header ('*')
+      spoofed Host got HTTP 401
+      fix: Set DJANGO_ALLOWED_HOSTS to your real hostnames
+  ✖ Admin API is reachable from your network: 10.1.21.84:8100
+      You think it is local, but anyone on this network can reach the dashboard
+      fix: Bind the port to loopback in compose: '127.0.0.1:8000:8000' and drop the task-processor port
+  ✖ Default secrets in running containers: DJANGO_SECRET_KEY, WAREHOUSE_CREDENTIALS_SECRET, database password
+      The stock docker-compose.yml ships these; with them, session tokens can be forged
+      fix: Generate random values (flagkit keeps them in .flagkit/stack.env)
+EXPERIMENTATION
+  ✔ EXPERIMENTATION_ENABLED=true on the API
+  ✖ Events are being DROPPED: this environment does not store SDK events
+      Every exposure and conversion your SDKs send gets a 404 and is discarded silently. Experiments will show no data.
+      fix: Warehouse must be postgres + {"source":"flagsmith_database"} (Environment Settings → Warehouse → Flagsmith database) — `flagkit doctor --fix` can do this
+  ✖ Web / Production: warehouse type "flagsmith" is the Cloud-only managed warehouse; self-hosted events get 404
+      fix: Replace it with postgres + {"source":"flagsmith_database"}
+SDK
+  ✔ SDK flags endpoint works (0 flags)
+      SDK apiUrl: http://localhost:8100/api/v1/
+CLI
+  ✖ FLAGSMITH_API_KEY is set, but the Flagsmith CLI ignores it for self-hosted hosts
+      fix: export FLAGSMITH_API_KEY_localhost_8100=$FLAGSMITH_API_KEY && unset FLAGSMITH_API_KEY
+  ✖ FLAGSMITH_SDK_API_URL=http://localhost:8100/api/v1/ makes `flagsmith eval` fail with 405
+      fix: export FLAGSMITH_SDK_API_URL=http://localhost:8100
+ADMIN
+  ⚠ Web / Production: client-side traits are writable by anyone holding the public key
+      fix: PATCH allow_client_traits=false (if you do not set traits from the browser)
+
+3 passed, 3 warnings, 6 failures
+
+Run with --fix to repair 2 issue(s) (asks before changing anything).

@@ -19,6 +19,10 @@ Stack
   bootstrap          Bootstrap an already-running Flagsmith (--api-url, --email)
   status             Show URLs, keys and environments
 
+Diagnose
+  doctor             Check ANY self-hosted Flagsmith for silent experimentation breakage, CLI/SDK
+                     misconfig and security issues  (--api-url, --env-key, --fix, --json)
+
 Experiments
   experiment create  Create the demo landing-page A/B test (flag + metric + experiment) and start it
   experiment results Print live results (win probability, lift)
@@ -66,6 +70,8 @@ const { values, positionals } = parseArgs({
     port: { type: 'string', default: '3000' },
     wipe: { type: 'boolean', default: false },
     'show-secrets': { type: 'boolean', default: false },
+    fix: { type: 'boolean', default: false },
+    yes: { type: 'boolean', default: false },
     'env-key': { type: 'string' },
     out: { type: 'string', default: 'docs' },
     'public-api-url': { type: 'string' },
@@ -126,6 +132,17 @@ try {
     case 'build-page': {
       const { buildPage } = await import('../src/build-page.js');
       buildPage({ envKey: values['env-key'], out: values.out, apiUrl: values['public-api-url'] });
+      break;
+    }
+    case 'doctor': {
+      const { runDoctor } = await import('../src/doctor.js');
+      const st = loadState();
+      process.exitCode = await runDoctor({
+        apiUrl: values['api-url'] !== 'http://localhost:8000' ? values['api-url'] : process.env.FLAGSMITH_API_URL || st?.apiUrl,
+        envKey: values['env-key'] || process.env.FLAGSMITH_ENVIRONMENT || st?.environments?.[0]?.api_key,
+        adminKey: process.env.FLAGSMITH_ADMIN_KEY || st?.masterKey,
+        fix: values.fix, yes: values.yes, json: values.json,
+      });
       break;
     }
     case 'tui': {

@@ -39,9 +39,9 @@ export function requireState() {
   return s;
 }
 
-// FLAGSMITH_API_KEY_<host>: '-' doubled, '.' and ':' -> '_'  (e.g. localhost:8000 -> localhost_8000)
+// FLAGSMITH_API_KEY_<host>: '-' -> '__', '.' and ':' -> '_'  (e.g. localhost:8000 -> localhost_8000)
 export function cliKeyVar(apiUrl) {
-  const host = new URL(apiUrl).host.replace(/-/g, '--').replace(/[.:]/g, '_');
+  const host = new URL(apiUrl).host.replace(/-/g, '__').replace(/[.:]/g, '_');
   return `FLAGSMITH_API_KEY_${host}`;
 }
 
