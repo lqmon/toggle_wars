@@ -8,7 +8,7 @@ dark theme to match the page. Before recording: `node bin/flagkit.js down --wipe
 > The obvious setup silently throws away every experiment event, and leaves the admin open on your Wi-Fi."
 
 ## 0:20 – 0:55 · `flagkit doctor` on the stock setup (Track 3)
-- Terminal: the untouched upstream compose running on :8100.
+- `examples/stock-compose-demo.sh` boots the untouched upstream compose on :8100 and prints the doctor command.
 - `node bin/flagkit.js doctor --api-url http://localhost:8100 --env-key <key>`
 - Pause on **"Events are being DROPPED"** and **"Admin API is reachable from your network"**.
 - `--fix` → `y` → re-run: events check is green.
