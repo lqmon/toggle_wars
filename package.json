@@ -1,0 +1,38 @@
+{
+  "name": "flagkit",
+  "version": "0.1.0",
+  "description": "Self-hosted Flagsmith + Experimentation in one command: zero-click bootstrap, a terminal dashboard, a sample A/B test and an agent skill.",
+  "type": "module",
+  "bin": {
+    "flagkit": "bin/flagkit.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "stack",
+    "demo-app",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "up": "node bin/flagkit.js up",
+    "tui": "node bin/flagkit.js tui"
+  },
+  "license": "MIT",
+  "keywords": [
+    "flagsmith",
+    "feature-flags",
+    "experimentation",
+    "ab-testing",
+    "self-hosted",
+    "tui"
+  ],
+  "dependencies": {
+    "@flagsmith/flagsmith": "^12.6.0",
+    "@flagsmith/nodejs": "^9.5.0",
+    "ink": "^5.2.1",
+    "react": "^18.3.1"
+  }
+}

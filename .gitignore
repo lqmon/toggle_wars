@@ -1,0 +1,5 @@
+node_modules/
+.flagkit/
+flagsmith.env
+*.log
+.DS_Store
