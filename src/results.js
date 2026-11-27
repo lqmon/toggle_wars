@@ -9,7 +9,7 @@ export function summarise(results) {
     const inf = inference[key];
     return {
       key,
-      isControl: !inf,
+      isControl: key === 'control',
       exposures: v.n,
       conversions: v.sum,
       value: v.n ? v.sum / v.n : null,

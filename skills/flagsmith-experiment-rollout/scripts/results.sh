@@ -19,8 +19,8 @@ flagsmith api "$E/results/" --jq '
   .results as $r | ($r.payload.metrics[0] // null) as $m |
   if $m == null then "collecting data (no results yet)" else
     ("arm\tusers\tconv\trate\tlift\tP(win)"),
-    ($m.variants | to_entries[] | . as $v | ($m.inference[$v.key] // null) as $i |
+    ($m.variants | to_entries | sort_by(.key != "control")[] | . as $v | ($m.inference[$v.key] // null) as $i |
       "\($v.key)\t\($v.value.n)\t\($v.value.sum)\t\(((1000*$v.value.sum/([$v.value.n,1]|max))|floor)/10)%\t" +
-      (if $i then "\((100*$i.lift)|round)%\t\((100*$i.chance_to_win)|round)%" else "base\t-" end)),
+      (if $v.key == "control" then "base\t-" elif $i then "\((100*$i.lift)|round)%\t\((100*$i.chance_to_win)|round)%" else "-\t(needs conversions)" end)),
     "as_of=\($r.as_of)" + (if ($r.payload.srm_p_value // 1) < 0.01 then " SRM=YES(do not trust)" else "" end)
   end'

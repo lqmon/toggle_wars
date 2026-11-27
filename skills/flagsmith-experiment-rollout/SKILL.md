@@ -14,15 +14,19 @@ You take one change from "idea" to "winner rolled out to everyone", through Flag
 Work in phases. **Stop at every ⛔ gate and wait for an explicit yes from the person.**
 Never skip a gate because the change "looks safe".
 
-Keep output small: always use `--jq` to fetch only the fields you need. The scripts in
-`scripts/` already do this; prefer them over raw calls. A full run reads about 130 tokens of tool output.
-Never print whole JSON payloads; if you need one field, use `--jq '.field'`.
+**Run Flagsmith through the scripts in `scripts/`, not raw commands.** They read the credentials from the
+environment internally. Agent sandboxes often refuse commands that expand `$VARIABLES` or use `source`, and
+the scripts avoid both. They also keep output small: a full run reads about 130 tokens of tool output.
+If you do need a raw call, use `--jq '.field'` and never print whole JSON payloads.
+
+All scripts need `FLAGSMITH_ENVIRONMENT` (and `FLAGSMITH_API_URL` plus a host-scoped key for self-hosted) to be set
+already. If preflight says they're missing, ask the person to load them (`source flagsmith.env`, or `flagsmith login`).
+Don't try to find or print keys yourself.
 
 ## 0. Preflight (no changes)
 
 ```bash
-source flagsmith.env 2>/dev/null   # local/self-hosted (written by `flagkit up`); Cloud: `flagsmith login`
-scripts/preflight.sh               # prints: host, project, env, warehouse status — one line each
+scripts/preflight.sh               # host, env, warehouse status, active experiments: one line each
 ```
 Stop if the warehouse is not `connected`. Self-hosted fix: Environment Settings → Warehouse → Flagsmith database
 (API: `warehouse_type=postgres`, `config={"source":"flagsmith_database"}`).
@@ -64,9 +68,11 @@ Show the diff first. Rules (see `references/sdk.md` for every language):
 
 ⛔ **Gate 3** (only if the environment name matches `prod`): "Start the experiment on production traffic?"
 ```bash
-flagsmith api "api/v1/environments/$FLAGSMITH_ENVIRONMENT/experiments/<id>/start/" -X POST --jq .status
+scripts/start.sh <id>        # starts it, then prints e.g. "bucketing: control=4 short=4"
+scripts/verify.sh <flag> 8   # re-check bucketing any time (records no exposures)
 ```
-Verify bucketing: `flagsmith eval <flag> --identity test-1 --jq .variant` (repeat with 2–3 ids).
+Don't create test traffic through the app: those would be real exposures. Leave traffic to real users,
+or to the person.
 
 ## 5. Monitor
 
@@ -84,17 +90,18 @@ When the stop rule is met, show the results table and the exact commands below.
 ⛔ **Gate 4** — ask: "Roll out `<winner>` to 100% of `<env>`?" (if it is control, ask "keep current behaviour?")
 
 ```bash
-scripts/rollout.sh <id> <flag> <winner_value>   # ends experiment, sets flag value, zeroes weights, verifies with eval
+scripts/rollout.sh <id> <flag> <winner_key|control|disable>   # Flagsmith ends it + rolls out; verified with eval
 ```
 It prints the **rollback command**. Give it to the person verbatim.
 
 ## 7. Clean up (flag debt)
 
-1. `grep -rn "<flag>" --include=*.{js,ts,tsx,py,go,java,dart} .` — list every reference.
+1. `git grep -n "<flag>"`: list every reference (tracked files only, no shell expansion needed).
 2. Remove the losing branch and the `getExperimentFlag` call; keep the winning code path. Keep `trackEvent`
    only if the metric is still wanted.
 3. ⛔ **Gate 5** — show the diff; on yes, commit on a branch (`git switch -c cleanup/<flag>`), open a PR with
-   `gh pr create` including the results table.
+   `gh pr create` including the results table. If `gh` isn't available, commit on the branch and tell the
+   person the branch name and the results table to paste into a PR.
 4. Only after that PR merges and deploys: `flagsmith feature update <flag> --archive`.
 
 ## Report

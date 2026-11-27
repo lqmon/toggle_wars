@@ -5,7 +5,7 @@
 //   4 Approvals    changes proposed by agents (MCP) — nothing is applied until a person approves here
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { render, Box, Text, useInput, useApp, useStdout } from 'ink';
-import { adminOf } from './experiment.js';
+import { adminOf, featureIdOf } from './experiment.js';
 import { summarise } from './results.js';
 import { runDoctor } from './doctor.js';
 import { listChanges, approveChange, rejectChange } from './approvals.js';
@@ -123,7 +123,7 @@ function App({ state }) {
       // Flagsmith ends the experiment and rolls the decision out to 100% of the environment.
       let body = { rollout_decision: 'control' };
       if (winner !== 'control') {
-        const opts = await api.list(`projects/${state.project.id}/features/${x.feature}/mv-options/`);
+        const opts = await api.list(`projects/${state.project.id}/features/${featureIdOf(x)}/mv-options/`);
         body = { rollout_decision: 'variant', rollout_variant: opts.find((o) => o.key === winner).id };
       }
       await api.post(`environments/${x.env.api_key}/experiments/${x.id}/complete/`, body);

@@ -126,6 +126,9 @@ export async function createDemoExperiment(state, { envName = 'Development', rol
   return exp;
 }
 
+// Experiment.feature is an object ({id, name, …}) on current Flagsmith, a bare id on older versions.
+export const featureIdOf = (exp) => (exp.feature && typeof exp.feature === 'object' ? exp.feature.id : exp.feature);
+
 // End an experiment and let Flagsmith roll the decision out to 100% of the environment.
 export async function completeExperiment(state, { envName, experimentId, winner }) {
   const api = adminOf(state);
@@ -134,7 +137,7 @@ export async function completeExperiment(state, { envName, experimentId, winner 
   let body = { rollout_decision: 'control' };
   if (winner === 'disable') body = { rollout_decision: 'disable' };
   else if (winner !== 'control') {
-    const opts = await api.list(`projects/${state.project.id}/features/${exp.feature}/mv-options/`);
+    const opts = await api.list(`projects/${state.project.id}/features/${featureIdOf(exp)}/mv-options/`);
     const opt = opts.find((o) => o.key === winner);
     if (!opt) throw new Error(`No variant "${winner}" on experiment #${experimentId}`);
     body = { rollout_decision: 'variant', rollout_variant: opt.id };

@@ -68,3 +68,15 @@ test('buildPage writes a CSP-locked static site', () => {
   assert.ok(fs.existsSync(path.join(out, 'sdk.mjs')));
   assert.match(fs.readFileSync(path.join(out, 'config.js'), 'utf8'), /"environmentID":"abcdefghijklmnop"/);
 });
+
+test('control is identified by key even before any conversions', () => {
+  const s = summarise({ results: { payload: { metrics: [{ variants: { benefit: { n: 5, sum: 0 }, control: { n: 2, sum: 0 } }, inference: {} }] } } });
+  assert.equal(s.rows[0].key, 'control');
+  assert.equal(s.rows.filter((r) => r.isControl).length, 1);
+});
+
+test('featureIdOf handles object and bare-id shapes', async () => {
+  const { featureIdOf } = await import('../src/experiment.js');
+  assert.equal(featureIdOf({ feature: { id: 5, name: 'x' } }), 5);
+  assert.equal(featureIdOf({ feature: 7 }), 7);
+});
