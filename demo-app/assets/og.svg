@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="g1" cx="22%" cy="18%" r="60%"><stop offset="0" stop-color="#34d399" stop-opacity=".35"/><stop offset="1" stop-color="#34d399" stop-opacity="0"/></radialGradient>
+    <radialGradient id="g2" cx="85%" cy="10%" r="55%"><stop offset="0" stop-color="#22d3ee" stop-opacity=".28"/><stop offset="1" stop-color="#22d3ee" stop-opacity="0"/></radialGradient>
+    <linearGradient id="t" x1="0" x2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#22d3ee"/></linearGradient>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#ffffff" stroke-opacity=".05"/></pattern>
+  </defs>
+  <rect width="1200" height="630" fill="#070b16"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <rect width="1200" height="630" fill="url(#g1)"/><rect width="1200" height="630" fill="url(#g2)"/>
+  <g transform="translate(72,72)">
+    <rect width="56" height="56" rx="14" fill="url(#t)"/>
+    <path d="M18 12v34M18 13h20l-4.5 7L38 27H18" fill="none" stroke="#022c22" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="76" y="40" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="34" font-weight="700" fill="#eef2ff">FlagKit</text>
+  </g>
+  <text x="72" y="236" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="64" font-weight="800" fill="#eef2ff" letter-spacing="-2">Which headline wins?</text>
+  <text x="72" y="312" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="64" font-weight="800" fill="url(#t)" letter-spacing="-2">Your click decides.</text>
+  <text x="72" y="380" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="28" fill="#94a3b8">A live A/B test built with Flagsmith Experimentation. You'll see one</text>
+  <text x="72" y="418" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="28" fill="#94a3b8">of two versions of the page, and your click counts. Anonymous, no sign-up.</text>
+  <g font-family="Menlo, monospace" font-size="22" fill="#cbd5e1">
+    <rect x="72" y="486" width="214" height="56" rx="28" fill="#0a0f1d" stroke="#34d399" stroke-opacity=".6"/>
+    <circle cx="102" cy="514" r="7" fill="#34d399"/>
+    <text x="120" y="521">live test</text>
+    <rect x="302" y="486" width="300" height="56" rx="28" fill="#0a0f1d" stroke="#ffffff" stroke-opacity=".12"/>
+    <text x="330" y="521">50/50 · Bayesian</text>
+    <rect x="618" y="486" width="268" height="56" rx="28" fill="#0a0f1d" stroke="#ffffff" stroke-opacity=".12"/>
+    <text x="646" y="521">open source</text>
+  </g>
+</svg>

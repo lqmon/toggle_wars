@@ -28,5 +28,7 @@ export function buildPage({ envKey, out = 'docs', apiUrl, flag = DEMO.flag, even
   fs.writeFileSync(path.join(out, 'config.js'), `window.FLAGKIT_CONFIG = ${JSON.stringify(cfg)};\n`);
   fs.copyFileSync(sdk, path.join(out, 'sdk.mjs'));
   fs.writeFileSync(path.join(out, '.nojekyll'), '');
+  fs.mkdirSync(path.join(out, 'assets'), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'demo-app', 'assets', 'og.png'), path.join(out, 'assets', 'og.png'));
   console.log(`✔ Static page written to ${out}/ (flag "${flag}", event "${event}", ${apiUrl ? apiUrl : 'Flagsmith Cloud'})`);
 }
