@@ -8,11 +8,15 @@ import { z } from 'zod';
 import { adminOf, envOf } from './experiment.js';
 import { summarise, formatTable } from './results.js';
 import { runDoctor } from './doctor.js';
-import { proposeChange, getChange, listChanges } from './approvals.js';
+import { proposeChange, getChange, listChanges, isProduction } from './approvals.js';
+import { clean } from './sanitize.js';
 
 const valueOf = (v) => (v && typeof v === 'object' ? v.string_value ?? v.integer_value ?? v.boolean_value : v);
-const text = (t) => ({ content: [{ type: 'text', text: t }] });
-const fail = (e) => ({ content: [{ type: 'text', text: `error: ${e.message || e}` }], isError: true });
+// Server-sourced strings are cleaned before they go back to the agent (no smuggled escapes).
+const text = (t) => ({ content: [{ type: 'text', text: t.split('\n').map((l) => l.split('\t').map(clean).join('\t')).join('\n') }] });
+const fail = (e) => ({ content: [{ type: 'text', text: `error: ${clean(e.message || String(e))}` }], isError: true });
+// Free text from the agent may not carry control characters (they could forge what the approver sees).
+const safeText = (max) => z.string().max(max).refine((v) => !/[\u0000-\u001f\u007f-\u009f]/.test(v), 'control characters are not allowed');
 const name = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/, 'lowercase letters, digits, _ and - only');
 
 export async function runMcp(state) {
@@ -123,16 +127,16 @@ export async function runMcp(state) {
     inputSchema: {
       kind: z.enum(['toggle_flag', 'set_flag_value', 'ship_winner', 'create_experiment']),
       environment: envArg,
-      reason: z.string().min(5).max(500).describe('Why: shown to the approver'),
+      reason: safeText(500).refine((v) => v.length >= 5, 'too short').describe('Why: shown to the approver'),
       flag: name.optional(),
       enabled: z.boolean().optional(),
-      value: z.string().max(200).optional(),
+      value: safeText(200).optional(),
       experiment_id: z.number().int().positive().optional(),
-      winner: z.string().max(100).optional().describe('variant key, "control" or "disable"'),
+      winner: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/).optional().describe('variant key, "control" or "disable"'),
       variants: z.array(name).max(5).optional(),
       event: name.optional(),
-      name: z.string().max(120).optional(),
-      hypothesis: z.string().max(500).optional(),
+      name: safeText(120).optional(),
+      hypothesis: safeText(500).optional(),
       rollout: z.number().min(1).max(100).optional(),
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -140,7 +144,7 @@ export async function runMcp(state) {
     try {
       const c = await proposeChange(state, { kind, params, reason, requestedBy: 'mcp-agent' });
       return text([
-        `proposed ${c.id} (${c.risk === 'high' ? 'HIGH RISK: production' : 'normal risk'})`,
+        `proposed ${c.id} (${c.risk !== 'high' ? 'normal risk' : isProduction(state, c) ? 'HIGH RISK: production' : 'HIGH RISK: creates a flag in every environment'})`,
         `change: ${c.summary}`, `before: ${c.before}`, `after:  ${c.after}`,
         'status: pending — NOT applied. Ask the user to approve it in `flagkit tui` → 4 Approvals, or run `flagkit approve ' + c.id + '` in their terminal.',
       ].join('\n'));
@@ -150,7 +154,7 @@ export async function runMcp(state) {
   server.registerTool('flagkit_change_status', {
     title: 'Check a proposed change',
     description: 'Status of a change request: pending, applied, rejected or failed. Omit id to list recent requests.',
-    inputSchema: { id: z.string().regex(/^chg_[0-9a-f]{6}$/).optional() },
+    inputSchema: { id: z.string().regex(/^chg_[0-9a-f]{12}$/).optional() },
     annotations: { readOnlyHint: true },
   }, async ({ id }) => {
     const rows = id ? [getChange(id)].filter(Boolean) : listChanges().slice(-10);

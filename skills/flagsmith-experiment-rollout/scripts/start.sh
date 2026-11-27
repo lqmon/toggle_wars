@@ -2,6 +2,8 @@
 # Start a created experiment, then confirm bucketing with a few throwaway identities (no exposures recorded).
 # usage: start.sh <experiment_id>
 set -euo pipefail
+# Server-held names are data: drop control characters (keep tab/newline) before they reach a terminal.
+clean() { LC_ALL=C tr -d '\000-\010\013-\037\177'; }
 : "${FLAGSMITH_ENVIRONMENT:?FLAGSMITH_ENVIRONMENT is not set: ask the person to load their Flagsmith credentials}"
 ID=${1:?experiment id}
 [[ $ID =~ ^[0-9]+$ ]] || { echo "experiment id must be a number"; exit 1; }
@@ -14,6 +16,6 @@ if [ -z "$FLAG" ]; then
   FID=$(flagsmith api "$E/experiments/$ID/" --jq .feature)
   FLAG=$(flagsmith api "api/v1/projects/$(flagsmith api "$E/" --jq .project)/features/$FID/" --jq .name)
 fi
-echo "env=$ENV_NAME flag=$FLAG"
+echo "env=$ENV_NAME flag=$FLAG" | clean
 flagsmith api "$E/experiments/$ID/start/" -X POST --jq '"experiment \(.id) \(.status)"'
 "$(dirname "$0")/verify.sh" "$FLAG" 8

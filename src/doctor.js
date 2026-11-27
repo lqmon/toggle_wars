@@ -8,6 +8,7 @@ import https from 'node:https';
 import readline from 'node:readline/promises';
 import { FlagsmithAdmin } from './api.js';
 import { cliKeyVar } from './config.js';
+import { clean } from './sanitize.js';
 
 const ICON = { pass: '✔', warn: '⚠', fail: '✖', skip: '·' };
 const COLOR = { pass: 32, warn: 33, fail: 31, skip: 90 };
@@ -60,13 +61,16 @@ function dockerEnv() {
 export async function runDoctor({ apiUrl, envKey, adminKey, fix = false, yes = false, json = false, quiet = false } = {}) {
   apiUrl = (apiUrl || process.env.FLAGSMITH_API_URL || 'http://localhost:8000').replace(/\/+$/, '').replace(/\/api\/v1$/, '');
   envKey ||= process.env.FLAGSMITH_ENVIRONMENT || process.env.FLAGSMITH_ENVIRONMENT_KEY;
-  adminKey ||= process.env[cliKeyVar(apiUrl)] || process.env.FLAGSMITH_API_KEY;
+  // Keys stay with their host: the unscoped FLAGSMITH_API_KEY is the Flagsmith CLI's Cloud credential,
+  // so it is only ever sent to Flagsmith Cloud. Self-hosted targets need the host-scoped variable.
+  adminKey ||= process.env[cliKeyVar(apiUrl)] || (isCloud(apiUrl) ? process.env.FLAGSMITH_API_KEY : undefined);
   const host = new URL(apiUrl).hostname;
   const results = [];
   const fixes = [];
   const add = (section, status, title, detail = '', fixText = '', apply = null) => {
-    results.push({ section, status, title, detail, fix: fixText });
-    if (apply && status !== 'pass') fixes.push({ title, apply });
+    // Names, statuses and error bodies come from the server: clean them once, here, for every output.
+    results.push({ section, status, title: clean(title), detail: clean(detail), fix: clean(fixText) });
+    if (apply && status !== 'pass') fixes.push({ title: clean(title), apply });
   };
 
   // ── Reachability ─────────────────────────────────────────────────────────

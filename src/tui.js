@@ -8,7 +8,17 @@ import { render, Box, Text, useInput, useApp, useStdout } from 'ink';
 import { adminOf, featureIdOf } from './experiment.js';
 import { summarise } from './results.js';
 import { runDoctor } from './doctor.js';
-import { listChanges, approveChange, rejectChange } from './approvals.js';
+import { listChanges, approveChange, rejectChange, describeParams, isProduction } from './approvals.js';
+import { clean } from './sanitize.js';
+
+// Everything from Flagsmith or from agents is cleaned of control characters as it is loaded,
+// so nothing the TUI renders can carry terminal escape sequences.
+const cleanObj = (o) => {
+  if (typeof o === 'string') return clean(o);
+  if (Array.isArray(o)) return o.map(cleanObj);
+  if (o && typeof o === 'object') return Object.fromEntries(Object.entries(o).map(([k, v]) => [clean(k), cleanObj(v)]));
+  return o;
+};
 
 const h = React.createElement;
 const valueOf = (v) => (v && typeof v === 'object' ? v.string_value ?? v.integer_value ?? v.boolean_value : v);
@@ -30,8 +40,8 @@ function useFlags(state, api) {
         const fs = await api.list(`features/featurestates/?environment=${env.id}`);
         for (const s of fs) if (s.feature_segment == null && s.identity == null) cells[`${s.feature}:${env.id}`] = s;
       }));
-      setData({ features: features.filter((f) => !f.is_archived), cells, error: null, loading: false });
-    } catch (e) { setData((d) => ({ ...d, error: e.message, loading: false })); }
+      setData({ features: cleanObj(features.filter((f) => !f.is_archived)), cells: cleanObj(cells), error: null, loading: false });
+    } catch (e) { setData((d) => ({ ...d, error: clean(e.message), loading: false })); }
   }, []);
   return [data, load];
 }
@@ -47,7 +57,7 @@ function useExperiments(state, api) {
         if (refreshId === x.id) await api.post(`environments/${env.api_key}/experiments/${x.id}/results/refresh/`).catch(() => {});
         let results = null;
         try { results = await api.get(`environments/${env.api_key}/experiments/${x.id}/results/`); } catch { /* none yet */ }
-        out.push({ ...x, env, summary: summarise(results) });
+        out.push({ ...cleanObj(x), env, summary: cleanObj(summarise(results)) });
       }
     }
     out.sort((a, b) => (a.status === 'running' ? -1 : 1) - (b.status === 'running' ? -1 : 1) || b.id - a.id);
@@ -76,7 +86,7 @@ function App({ state }) {
   const [changes, setChanges] = useState([]);
   const [apRow, setApRow] = useState(0);
   useEffect(() => {
-    const load = () => setChanges(listChanges().sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || b.createdAt.localeCompare(a.createdAt)));
+    const load = () => setChanges(cleanObj(listChanges()).sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || b.createdAt.localeCompare(a.createdAt)));
     load(); const t = setInterval(load, 2000); return () => clearInterval(t);
   }, []);
   const pending = changes.filter((c) => c.status === 'pending');
@@ -90,7 +100,7 @@ function App({ state }) {
   const runDoc = useCallback(async () => {
     setDoctor({ running: true, results: [] });
     const dev = state.environments.find((e) => e.name === 'Development') || state.environments[0];
-    setDoctor(await runDoctor({ apiUrl: state.apiUrl, envKey: dev.api_key, adminKey: state.masterKey, quiet: true }));
+    setDoctor(cleanObj(await runDoctor({ apiUrl: state.apiUrl, envKey: dev.api_key, adminKey: state.masterKey, quiet: true })));
   }, []);
   useEffect(() => { if (tab === 'doctor' && !doctor) runDoc(); }, [tab]);
 
@@ -115,7 +125,7 @@ function App({ state }) {
       await api.patch(`environments/${env.api_key}/featurestates/${cell.id}/`, { enabled: !cell.enabled });
       setMsg(`✔ ${f.name} → ${!cell.enabled ? 'ON' : 'OFF'} in ${env.name}`);
       reloadFlags();
-    } catch (e) { setMsg(`✖ ${e.message.slice(0, 140)}`); }
+    } catch (e) { setMsg(`✖ ${clean(e.message.slice(0, 140))}`); }
   }
 
   async function shipWinner(x, winner) {
@@ -129,7 +139,7 @@ function App({ state }) {
       await api.post(`environments/${x.env.api_key}/experiments/${x.id}/complete/`, body);
       setMsg(`✔ #${x.id} ended; "${winner}" rolled out to 100% of ${x.env.name}`);
       reloadFlags(); reloadExps();
-    } catch (e) { setMsg(`✖ ${e.message.slice(0, 160)}`); }
+    } catch (e) { setMsg(`✖ ${clean(e.message.slice(0, 160))}`); }
   }
 
   useInput((input, key) => {
@@ -138,8 +148,9 @@ function App({ state }) {
       if (input === 'y') {
         if (c.type === 'toggle') toggle(true);
         else if (c.type === 'ship') shipWinner(c.exp, c.winner);
-        else if (c.type === 'approve') approveChange(state, c.id).then((r) => { setMsg(`${r.status === 'applied' ? '✔ applied' : '✖ failed'} ${c.id}: ${r.result}`); setChanges(listChanges()); reloadFlags(); reloadExps(); }).catch((e) => setMsg(`✖ ${e.message}`));
-        else if (c.type === 'reject') { try { rejectChange(c.id); setMsg(`rejected ${c.id}`); setChanges(listChanges()); } catch (e) { setMsg(`✖ ${e.message}`); } }
+        // Pass the exact record that was shown, so a different change can never be applied in its place.
+        else if (c.type === 'approve') approveChange(state, c.id, c.shown).then((r) => { setMsg(`${r.status === 'applied' ? '✔ applied' : '✖ failed'} ${c.id}: ${clean(r.result)}`); setChanges(cleanObj(listChanges())); reloadFlags(); reloadExps(); }).catch((e) => setMsg(`✖ ${clean(e.message)}`));
+        else if (c.type === 'reject') { try { rejectChange(c.id, '', c.shown); setMsg(`rejected ${c.id}`); setChanges(cleanObj(listChanges())); } catch (e) { setMsg(`✖ ${clean(e.message)}`); } }
       }
       else setMsg('cancelled: nothing changed');
       return;
@@ -176,8 +187,10 @@ function App({ state }) {
       const sel = changes[apRow];
       if (key.upArrow) setApRow((r) => Math.max(0, r - 1));
       if (key.downArrow) setApRow((r) => Math.min(changes.length - 1, r + 1));
-      if (sel?.status === 'pending' && input === 'a') setConfirm({ type: 'approve', id: sel.id, text: `APPLY ${sel.id}: ${sel.summary}?${sel.risk === 'high' ? ' (PRODUCTION)' : ''}` });
-      if (sel?.status === 'pending' && input === 'x') setConfirm({ type: 'reject', id: sel.id, text: `Reject ${sel.id}?` });
+      // The confirmation is built from the structured params (never agent prose); production is computed, not claimed.
+      const raw = sel && listChanges().find((x) => x.id === sel.id && x.createdAt === sel.createdAt);
+      if (raw?.status === 'pending' && input === 'a') setConfirm({ type: 'approve', id: raw.id, shown: raw, text: `${isProduction(state, raw) ? 'PRODUCTION! ' : ''}APPLY ${raw.id}: ${describeParams(raw)}?` });
+      if (raw?.status === 'pending' && input === 'x') setConfirm({ type: 'reject', id: raw.id, shown: raw, text: `Reject ${raw.id}?` });
     }
   });
 
@@ -251,12 +264,13 @@ function App({ state }) {
     body = h(Box, { flexDirection: 'column', paddingX: 1 },
       changes.length === 0 ? h(Text, { dimColor: true }, 'No change requests. Agents file them through the MCP server (`flagkit mcp`) → flagkit_propose_change.') : null,
       ...changes.slice(0, 12).map((c, i) => h(Text, { key: c.id, bold: i === apRow, color: i === apRow ? 'cyan' : undefined },
-        `${i === apRow ? '› ' : '  '}${c.id}  `, h(Text, { color: color[c.status] }, c.status.padEnd(9)), c.risk === 'high' ? h(Text, { color: 'red' }, 'PROD ') : '     ', c.summary.slice(0, width - 34))),
+        `${i === apRow ? '› ' : '  '}${c.id}  `, h(Text, { color: color[c.status] }, c.status.padEnd(9)), c.risk === 'high' ? h(Text, { color: 'red' }, isProduction(state, c) ? 'PROD ' : 'HIGH ') : '     ', c.summary.slice(0, width - 34))),
       sel ? h(Box, { flexDirection: 'column', marginTop: 1, borderStyle: 'single', borderColor: sel.status === 'pending' ? 'yellow' : 'gray', paddingX: 1, width: width - 2 },
         h(Text, { bold: true }, sel.summary),
         h(Text, null, h(Text, { dimColor: true }, 'before  '), sel.before),
         h(Text, null, h(Text, { dimColor: true }, 'after   '), h(Text, { color: 'cyan' }, sel.after)),
         h(Text, { wrap: 'wrap' }, h(Text, { dimColor: true }, 'reason  '), sel.reason),
+        sel.details ? h(Text, { wrap: 'wrap' }, h(Text, { dimColor: true }, 'details '), sel.details) : null,
         h(Text, { dimColor: true }, `requested by ${sel.requestedBy} · ${sel.createdAt}${sel.decidedBy ? ` · decided by ${sel.decidedBy}` : ''}`),
         sel.result ? h(Text, { color: color[sel.status] }, `→ ${sel.result}`) : null,
       ) : null,

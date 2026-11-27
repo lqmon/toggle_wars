@@ -3,6 +3,8 @@
 # (one variant at 100%), with how many tracked files still reference them. Read-only.
 # usage: stale.sh
 set -euo pipefail
+# Server-held names are data: drop control characters (keep tab/newline) before they reach a terminal.
+clean() { LC_ALL=C tr -d '\000-\010\013-\037\177'; }
 : "${FLAGSMITH_ENVIRONMENT:?FLAGSMITH_ENVIRONMENT is not set: ask the person to load their Flagsmith credentials}"
 E="api/v1/environments/$FLAGSMITH_ENVIRONMENT"
 
@@ -13,11 +15,11 @@ decided=$(flagsmith feature list --json | jq -r '.[] | select(.type=="multivaria
   | select($w != null) | "\($f.name)\t\($w.key // $w.value) at 100%"')
 stage=$(flagsmith flag list --json | jq -r '.[] | select(.lifecycle_stage=="stale") | "\(.feature)\tmarked stale in Flagsmith"')
 
-rows=$(printf '%s\n%s\n%s\n' "$done_exps" "$decided" "$stage" | grep -v '^$' | sort -u -t$'\t' -k1,1 || true)
+rows=$(printf '%s\n%s\n%s\n' "$done_exps" "$decided" "$stage" | clean | grep -v '^$' | sort -u -t$'\t' -k1,1 || true)
 [ -n "$rows" ] || { echo "no flag debt found"; exit 0; }
-echo -e "flag\treason\tcode_refs"
+printf 'flag\treason\tcode_refs\n'
 while IFS=$'\t' read -r flag reason; do
   refs=$( (git grep -l -w -- "$flag" 2>/dev/null || true) | grep -vc '^\.claude/' || true)
-  echo -e "$flag\t$reason\t$refs"
+  printf '%s\t%s\t%s\n' "$flag" "$reason" "$refs"
 done <<<"$rows"
 echo "next: remove dead code where code_refs>0 (Gate 5), archive only flags with code_refs=0: flagsmith feature update <flag> --archive"

@@ -14,8 +14,8 @@ x-flagsmith-env: &flagsmith-env
   FLAGSMITH_DOMAIN: ${FLAGSMITH_DOMAIN:-localhost:8000}
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?run flagkit up}
   WAREHOUSE_CREDENTIALS_SECRET: ${WAREHOUSE_CREDENTIALS_SECRET:?run flagkit up}
-  # Set to 'true' by `flagkit up` once the admin exists, so nobody else can register.
-  PREVENT_SIGNUP: ${PREVENT_SIGNUP:-false}
+  # Closed by default. `flagkit up` opens it only for the first admin sign-up, then always closes it.
+  PREVENT_SIGNUP: ${PREVENT_SIGNUP:-true} # fail closed: only flagkit's first-run bootstrap opens it, briefly
   # ALLOW_REGISTRATION_WITHOUT_INVITE: 'true' # Uncomment and set to false to only allow signups via invitations
 
   # Enable Task Processor

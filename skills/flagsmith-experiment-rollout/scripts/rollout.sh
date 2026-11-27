@@ -3,6 +3,8 @@
 # Run only after human approval.
 # usage: rollout.sh <experiment_id> <flag> <winner_variant_key | control | disable>
 set -euo pipefail
+# Server-held names are data: drop control characters (keep tab/newline) before they reach a terminal.
+clean() { LC_ALL=C tr -d '\000-\010\013-\037\177'; }
 : "${FLAGSMITH_ENVIRONMENT:?source flagsmith.env or set FLAGSMITH_ENVIRONMENT}"
 ID=${1:?experiment id} FLAG=${2:?flag} WIN=${3:?winner key, control or disable}
 E="api/v1/environments/$FLAGSMITH_ENVIRONMENT"
@@ -19,7 +21,7 @@ esac
 echo "$BODY" | flagsmith api "$E/experiments/$ID/complete/" -X POST --input - --jq '"experiment \(.id) \(.status)"'
 
 # verify with fresh identities: everyone should now get the same value
-for i in 1 2 3 4 5; do flagsmith eval "$FLAG" --identity "verify-$RANDOM$i" --jq '.value'; done | sort | uniq -c | awk '{print "eval: "$1"/5 -> "$2}'
+for i in 1 2 3 4 5; do flagsmith eval "$FLAG" --identity "verify-$RANDOM$i" --jq '.value'; done | clean | sort | uniq -c | awk '{print "eval: "$1"/5 -> "$2}'
 read -r EN VAL W <<<"$BEFORE"
 # shell-quoted, so a hostile flag value can't turn the copy-pasted rollback into a different command
 printf 'ROLLBACK: flagsmith flag update %q --yes %s --value %q%s\n' "$FLAG" "$([ "$EN" = true ] && echo --enable || echo --disable)" "$VAL" "${W:+ --weight $(printf %q "$W")}"

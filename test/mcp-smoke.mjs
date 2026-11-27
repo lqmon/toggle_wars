@@ -10,7 +10,7 @@ await call('flagkit_list_experiments');
 await call('flagkit_experiment_results', { experiment_id: 2, environment: 'Staging' });
 const p = await call('flagkit_propose_change', { kind: 'toggle_flag', environment: 'Production', flag: 'hero_headline', enabled: false, reason: 'Kill switch drill for the demo' });
 await call('flagkit_propose_change', { kind: 'toggle_flag', environment: 'Production', flag: 'x; rm -rf /', enabled: false, reason: 'hostile input' });
-const id = p.match(/chg_[0-9a-f]{6}/)[0];
+const id = p.match(/chg_[0-9a-f]{12}/)[0];
 await call('flagkit_change_status', { id });
 await call('flagkit_list_flags');
 await c.close();

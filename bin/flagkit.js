@@ -100,9 +100,14 @@ try {
       console.log('▶ Starting self-hosted Flagsmith (Postgres, API + dashboard, task processor)…');
       compose(['up', '-d'], values.project, { PREVENT_SIGNUP: loadState() ? 'true' : 'false' });
       console.log('▶ Bootstrapping (admin, org, project, environments, API key, experimentation)…');
-      const s = await bootstrap({ apiUrl: values['api-url'], email: values.email });
-      console.log('▶ Locking sign-up now that the admin exists…');
-      compose(['up', '-d', '--wait', 'flagsmith', 'flagsmith-task-processor'], values.project, { PREVENT_SIGNUP: 'true' });
+      let s;
+      try {
+        s = await bootstrap({ apiUrl: values['api-url'], email: values.email });
+      } finally {
+        // Close sign-up whether or not bootstrap succeeded, so a failed first run never leaves it open.
+        console.log('▶ Locking sign-up…');
+        compose(['up', '-d', '--wait', 'flagsmith', 'flagsmith-task-processor'], values.project, { PREVENT_SIGNUP: 'true' });
+      }
       console.log('✔ Flagsmith is ready (bound to 127.0.0.1, sign-up disabled).');
       printStatus(s);
       console.log('  Next:  flagkit experiment create  →  flagkit simulate  →  flagkit tui\n');
@@ -144,10 +149,14 @@ try {
     case 'doctor': {
       const { runDoctor } = await import('../src/doctor.js');
       const st = loadState();
+      const target = values['api-url'] !== 'http://localhost:8000' ? values['api-url'] : process.env.FLAGSMITH_API_URL || st?.apiUrl || values['api-url'];
+      // Saved keys belong to the saved instance: never send them to a different host.
+      const sameHost = st && new URL(st.apiUrl).origin === new URL(target).origin;
+      if (st && !sameHost) console.error(`note: not using saved keys for ${new URL(target).origin} (they belong to ${new URL(st.apiUrl).origin})`);
       process.exitCode = await runDoctor({
-        apiUrl: values['api-url'] !== 'http://localhost:8000' ? values['api-url'] : process.env.FLAGSMITH_API_URL || st?.apiUrl,
-        envKey: values['env-key'] || process.env.FLAGSMITH_ENVIRONMENT || st?.environments?.[0]?.api_key,
-        adminKey: process.env.FLAGSMITH_ADMIN_KEY || st?.masterKey,
+        apiUrl: target,
+        envKey: values['env-key'] || process.env.FLAGSMITH_ENVIRONMENT || (sameHost ? st.environments?.[0]?.api_key : undefined),
+        adminKey: process.env.FLAGSMITH_ADMIN_KEY || (sameHost ? st.masterKey : undefined),
         fix: values.fix, yes: values.yes, json: values.json,
       });
       break;
@@ -158,10 +167,12 @@ try {
       break;
     }
     case 'approvals': {
-      const { listChanges } = await import('../src/approvals.js');
+      const { listChanges, describeParams } = await import('../src/approvals.js');
+      const { clean } = await import('../src/sanitize.js');
       const rows = listChanges(values.all ? undefined : 'pending');
       if (!rows.length) console.log(values.all ? 'No change requests.' : 'No pending change requests. (--all to see history)');
-      for (const c of rows) console.log(`${c.id}  ${c.status.padEnd(8)} ${c.risk === 'high' ? '⚠ PROD ' : ''}${c.summary}\n           before: ${c.before}  →  after: ${c.after}\n           reason: ${c.reason}${c.result ? `\n           result: ${c.result}` : ''}`);
+      // Everything an agent or server wrote is cleaned of control characters before it reaches the terminal.
+      for (const c of rows) console.log(`${clean(c.id)}  ${clean(c.status).padEnd(8)} ${describeParams(c)}\n           reason: ${clean(c.reason)}${c.result ? `\n           result: ${clean(c.result)}` : ''}`);
       break;
     }
     case 'approve':
@@ -172,7 +183,17 @@ try {
       if (!c) throw new Error(`Usage: flagkit ${cmd} <change id>  (see \`flagkit approvals\`)`);
       // Approval is a human act: require an interactive terminal and a typed confirmation.
       if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error(`${cmd} needs an interactive terminal (a person, not a script or agent).`);
-      console.log(`\n${c.id}  ${c.risk === 'high' ? '⚠ PRODUCTION  ' : ''}${c.summary}\n  before: ${c.before}\n  after:  ${c.after}\n  reason: ${c.reason}\n  requested by: ${c.requestedBy} at ${c.createdAt}\n`);
+      const { clean } = await import('../src/sanitize.js');
+      const { describeParams, isProduction } = await import('../src/approvals.js');
+      // Free text first (cleaned), then the facts built from the structured params, then the
+      // Production warning last, directly above the prompt, so nothing printed earlier can cover it.
+      console.log(`\nreason (from the requester): ${clean(c.reason)}`);
+      console.log(`requested by ${clean(c.requestedBy)} at ${clean(c.createdAt)}\n`);
+      console.log(`  change:  ${describeParams(c)}`);
+      console.log(`  before:  ${clean(c.before)}`);
+      console.log(`  after:   ${clean(c.after)}`);
+      if (isProduction(requireState(), c)) console.log(`\n  ⚠  PRODUCTION: this changes what real users get.`);
+      console.log('');
       const readline = await import('node:readline/promises');
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       const typed = (await rl.question(`Type the change id to ${cmd} it: `)).trim();

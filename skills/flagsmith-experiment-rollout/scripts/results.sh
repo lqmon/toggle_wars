@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Compact results table for an experiment. usage: results.sh <experiment_id> [--no-refresh]
 set -euo pipefail
+# Server-held names are data: drop control characters (keep tab/newline) before they reach a terminal.
+clean() { LC_ALL=C tr -d '\000-\010\013-\037\177'; }
 ID=${1:?experiment id}
 [[ $ID =~ ^[0-9]+$ ]] || { echo "experiment id must be a number"; exit 1; }
 : "${FLAGSMITH_ENVIRONMENT:?source flagsmith.env or set FLAGSMITH_ENVIRONMENT}"
@@ -20,7 +22,7 @@ if [ "${2:-}" != "--no-refresh" ]; then
     done
   fi
 fi
-flagsmith api "$E/" --jq '"#\(.id) \(.status): \(.name)"'
+flagsmith api "$E/" --jq '"#\(.id) \(.status): \(.name)"' | clean
 flagsmith api "$E/results/" --jq '
   .results as $r | ($r.payload.metrics[0] // null) as $m |
   if $m == null then "collecting data (no results yet)" else
@@ -29,5 +31,5 @@ flagsmith api "$E/results/" --jq '
       "\($v.key)\t\($v.value.n)\t\($v.value.sum)\t\(((1000*$v.value.sum/([$v.value.n,1]|max))|floor)/10)%\t" +
       (if $v.key == "control" then "base\t-" elif $i then "\((100*$i.lift)|round)%\t\((100*$i.chance_to_win)|round)%" else "-\t(needs conversions)" end)),
     "as_of=\($r.as_of)" + (if ($r.payload.srm_p_value // 1) < 0.01 then " SRM=YES(do not trust)" else "" end)
-  end'
+  end' | clean
 [ -z "$NOTE" ] || echo "$NOTE"

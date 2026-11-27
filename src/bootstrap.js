@@ -18,7 +18,15 @@ export async function bootstrap({
     onTick: (s) => s % 10 === 0 && log(`waiting for Flagsmith at ${apiUrl} (${s}s)…`),
   });
 
-  const prev = loadState();
+  apiUrl = apiUrl.replace(/\/+$/, '').replace(/\/api\/v1$/, '');
+  const { hostname, protocol, origin } = new URL(apiUrl);
+  if (protocol === 'http:' && !['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname)) {
+    log(`warning: ${origin} is plain http; the admin password and API key will cross the network unencrypted`);
+  }
+  // Saved credentials belong to the instance they were made for. Never send them to a different host.
+  const loaded = loadState();
+  const prev = loaded && new URL(loaded.apiUrl).origin === origin ? loaded : null;
+  if (loaded && !prev) log(`note: existing state is for ${new URL(loaded.apiUrl).origin}; starting fresh credentials for ${origin} (old state will be replaced)`);
   const password = prev?.admin?.email === email ? prev.admin.password : crypto.randomBytes(12).toString('base64url');
   const anon = new FlagsmithAdmin({ apiUrl });
 

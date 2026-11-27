@@ -23,13 +23,13 @@ export const envOf = (state, name) => {
 
 export const adminOf = (state) => new FlagsmithAdmin({ apiUrl: state.apiUrl, masterKey: state.masterKey });
 
-export async function ensureFeature(api, projectId, { flag, control, variants, description }) {
+export async function ensureFeature(api, projectId, { flag, control, variants, description, defaultEnabled = true }) {
   let feature = (await api.list(`projects/${projectId}/features/?search=${encodeURIComponent(flag)}`)).find((f) => f.name === flag);
   if (!feature) {
     feature = await api.post(`projects/${projectId}/features/`, {
       name: flag,
       initial_value: control,
-      default_enabled: true,
+      default_enabled: defaultEnabled,
       description,
     });
     console.log(`  › created multivariate flag "${flag}" (control="${control}")`);
@@ -72,14 +72,20 @@ export async function ensureMetric(api, envKey, { name, event, description }) {
 export async function createExperiment(state, {
   envName = 'Development', rollout = 100, start = true, track = false,
   flag, control = 'control', variants, event, metricName, name, hypothesis, description,
+  allowReuse = true, defaultEnabled = true,
 }) {
   const api = adminOf(state);
   const env = envOf(state, envName);
   const vs = variants.map((v) => (typeof v === 'string' ? { key: v, value: v } : v));
-  const { feature, options } = await ensureFeature(api, state.project.id, { flag, control, variants: vs, description: description || `Experiment: ${name}` });
+  // Check for a same-named experiment BEFORE creating anything, so a refused request leaves no new flag behind.
+  const existing = (await api.list(`environments/${env.api_key}/experiments/`)).find((e) => e.name === name);
+  if (existing && !allowReuse) throw new Error(`An experiment named "${name}" already exists (#${existing.id}); refusing to reuse it`);
+  const { feature, options } = await ensureFeature(api, state.project.id, { flag, control, variants: vs, defaultEnabled, description: description || `Experiment: ${name}` });
   const metric = await ensureMetric(api, env.api_key, { name: metricName || `${event} rate`, event, description: `Identities that fire ${event}` });
 
-  let exp = (await api.list(`environments/${env.api_key}/experiments/`)).find((e) => e.name === name);
+  let exp = existing;
+  // Only ever reuse an experiment that is on this same flag; never start someone else's experiment.
+  if (exp && featureIdOf(exp) !== feature.id) throw new Error(`Experiment "${name}" (#${exp.id}) is on a different flag; refusing to reuse it`);
   if (!exp) {
     const share = 100 / (vs.length + 1);
     exp = await api.post(`environments/${env.api_key}/experiments/`, {
