@@ -3,7 +3,7 @@
 **Self-hosted Flagsmith with Experimentation in one command. No clicking, plus a terminal dashboard, a sample A/B test and an Agent Skill that runs experiments end to end.**
 
 ```bash
-npx github:lqmon/toggle_wars up      # ~30s on a warm Docker cache
+git clone https://github.com/lqmon/toggle_wars && cd toggle_wars && npm install && node bin/flagkit.js up   # ~30s on a warm Docker cache
 ```
 
 ```
