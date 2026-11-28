@@ -18,7 +18,7 @@ From source: `git clone https://github.com/lqmon/toggle_wars && cd toggle_wars &
 | 🧰 | **03 · Build on Open Source Flagsmith** | `flagkit up`, `doctor`, `tui`, `tail`, [VS Code extension](vscode-extension/), [doctor](doctor/) + [report](report/) GitHub Actions, `npx flagsmith-kit`, CI that boots self-hosted Flagsmith from scratch |
 | 🧪 | **01 · Test Something Real** | [Live headline A/B test](https://lqmon.github.io/toggle_wars/) on Flagsmith Cloud ([details and results](#-track-01-a-real-experiment)), `flagkit plan` and `flagkit report` |
 | 🤖 | **02 · AI Agents and Feature Flags** | `flagkit mcp`: agents read, explain ("why does this user see this?") and propose; a person approves. `flagkit watch` files guardrail kill requests the same way |
-| 📜 | **04 · Agent Skills** | [`flagsmith-experiment-rollout`](skills/flagsmith-experiment-rollout/) (prove it, then ship it: ~130 tokens) and [`flagsmith-kill-switch`](skills/flagsmith-kill-switch/) (put out the fire: ~120 tokens) |
+| 📜 | **04 · Agent Skills** | [`flagsmith-experiment-rollout`](skills/flagsmith-experiment-rollout/) (prove it, then ship it: ~130 tokens, **$0.80 for a real agent run**) and [`flagsmith-kill-switch`](skills/flagsmith-kill-switch/) (put out the fire: ~120 tokens) |
 
 ---
 
