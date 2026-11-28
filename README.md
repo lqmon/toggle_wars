@@ -4,18 +4,19 @@
 [![Live A/B test](https://img.shields.io/badge/live%20A%2FB%20test-lqmon.github.io%2Ftoggle__wars-34d399)](https://lqmon.github.io/toggle_wars/)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-**Everything after `docker compose up` for self-hosted Flagsmith.** A zero-click bootstrap with Experimentation on, a **doctor** that finds the misconfigurations that silently drop your experiment data, tools for the whole life of an experiment (plan → live event feed → readable report → guardrails), a terminal dashboard, a **VS Code extension** with live flag values in your code, an **MCP server** where agents propose and humans approve, and **two Agent Skills**.
+**Everything after `docker compose up` for self-hosted Flagsmith.** A zero-click bootstrap with Experimentation on, a **doctor** that finds the misconfigurations that silently drop your experiment data, an **admin panel** for people who don't write code, **starter apps** with flags wired in properly, **flag lint + typed codegen** for CI, a **VS Code extension** that catches flag typos as you type, a terminal dashboard, tools for the whole life of an experiment, an **MCP server** where agents propose and humans approve, and **two Agent Skills**.
 
 ```bash
-npx flagsmith-kit up          # self-hosted Flagsmith + Experimentation, ~30s, zero clicks
+npx flagsmith-kit up --demo   # self-hosted Flagsmith + sample data + sample app + admin panel, one command
+npx flagsmith-kit panel       # web admin: guarded toggles, reasons, schedules, promote, audit + revert
+npx flagsmith-kit init react  # starter app: typed flags, offline defaults, every-flag-state tests, CI lint
 npx flagsmith-kit doctor      # or point it at YOUR existing Flagsmith: --api-url https://flags.acme.internal
-npx flagsmith-kit tui         # flags × environments, experiments, doctor, approvals
 ```
 From source: `git clone https://github.com/lqmon/toggle_wars && cd toggle_wars && npm install`, then `node bin/flagkit.js <command>`.
 
 | | Track | What to look at |
 |---|---|---|
-| 🧰 | **03 · Build on Open Source Flagsmith** | `flagkit up`, `doctor`, `tui`, `tail`, [VS Code extension](vscode-extension/), [doctor](doctor/) + [report](report/) GitHub Actions, `npx flagsmith-kit`, CI that boots self-hosted Flagsmith from scratch |
+| 🧰 | **03 · Build on Open Source Flagsmith** | All five suggested ideas, each taken past the obvious: [`up --demo` + snapshots](#-flagkit-up), the [admin panel](#-flagkit-panel-flags-for-people-who-dont-write-code), [starter templates](#-starter-templates-flagkit-init-express--react), the [VS Code extension](#-vs-code-extension-live-flags-and-typo-checks-in-your-code), the [TUI](#-flagkit-tui). Plus `doctor`, `lint`/`codegen`, `tail`, [doctor](doctor/) + [report](report/) GitHub Actions, and CI that boots self-hosted Flagsmith and exercises all of it |
 | 🧪 | **01 · Test Something Real** | [Live headline A/B test](https://lqmon.github.io/toggle_wars/) on Flagsmith Cloud ([details and results](#-track-01-a-real-experiment)), `flagkit plan` and `flagkit report` |
 | 🤖 | **02 · AI Agents and Feature Flags** | `flagkit mcp`: agents read, explain ("why does this user see this?") and propose; a person approves. `flagkit watch` files guardrail kill requests the same way |
 | 📜 | **04 · Agent Skills** | [`flagsmith-experiment-rollout`](skills/flagsmith-experiment-rollout/) (prove it, then ship it: ~130 tokens, **$0.80 for a real agent run**) and [`flagsmith-kill-switch`](skills/flagsmith-kill-switch/) (put out the fire: ~120 tokens) |
@@ -49,6 +50,48 @@ Starting Flagsmith is one command. Getting a **working A/B test** on self-hosted
 ✔ Flagsmith is ready (bound to 127.0.0.1, sign-up disabled).
 ```
 Official images and compose, every step through the Admin API, idempotent (re-run it any time). It writes `flagsmith.env`, which the official CLI and Flagsmith's [coding-agent prompt](https://docs.flagsmith.com/experimentation/set-up-with-a-coding-agent) use directly: `source flagsmith.env && flagsmith flag list`.
+
+**`flagkit up --demo`** goes from nothing to a working setup you can click through: the stack, the four starter flags (kill switch, release toggle, remote config, experiment), an A/B test with simulated visitors and real Bayesian results, the sample landing page on `:3000` and the admin panel on `:4100`. It skips any step that's already done, and a busy port moves to the next free one.
+
+**`flagkit snapshot save|restore|list`** captures the whole local Flagsmith as one file (`pg_dump`, gzipped, 0600, about 280 KB for the demo): flags, segments, identities, experiments, events, users and keys, along with the FlagKit state that matches them. Use it to reset to a known state before a demo or a test run, undo a bad bulk change in seconds, or hand a teammate your exact setup. A restore stops the API while it runs and asks you to type the name before it replaces anything.
+
+## 🎛 `flagkit panel`: flags for people who don't write code
+
+A local web admin (`http://localhost:4100`) for PMs, support and on-call. It's more than a toggle grid:
+
+- **Every change is attributed and explained.** Each change needs a name. Production also needs a reason, and you type the flag name back to confirm. The modal shows the exact before → after.
+- **Audit log with one-click revert.** Everything changed through the panel, the TUI, schedules or `flagkit set` is recorded with who, why, how, before and after. **Revert** puts the flag back exactly as it was.
+- **Scheduled changes**: "turn `checkout_v2` on at 09:00 Monday". They run while the panel is open, or from cron with `flagkit schedule run`.
+- **Promote**: preview the differences between Staging and Production, tick the flags you want, and copy them over. Flags in a running experiment are skipped automatically.
+- **Experiment lock.** A flag inside a running experiment can't be toggled by accident: changing it mid-test corrupts the result, so you have to tick "I understand".
+- **It reads your code**: badges for *stale* (the same everywhere and untouched for 14 days: hard-code it and delete it), *unused* (nothing references it) and *≠ drift*, plus a banner when the code asks for a flag that doesn't exist.
+- **User lookup**: "why does customer-4821 see this?", answered by Flagsmith's own evaluation: segment, split, experiment bucket or override.
+- **Approvals**: change requests from agents (MCP) and from the `watch` guardrail, applied by a person who types the request id to confirm.
+
+Security: it listens on 127.0.0.1 only. A random token travels in the URL fragment (never logged or sent as a Referer) and must accompany every API call as a header, which also blocks cross-site requests. The Host header is checked against DNS rebinding, cross-origin POSTs are refused, the CSP is strict (no inline script or style), and everything is rendered with `textContent`. CLI equivalents: `flagkit set`, `audit`, `revert`, `promote`, `schedule`.
+
+## 🧱 Starter templates: `flagkit init express | react`
+
+A starter app where flags are wired in the way production code needs them, not just `if (flag)`:
+
+| | what you get |
+|---|---|
+| **The four patterns** | `maintenance_mode` (kill switch; health checks stay up), `checkout_v2` (release toggle, on in Development only), `welcome_message` (remote config), `pricing_layout` (an experiment, with the exposure recorded where the variant is shown and the conversion tracked). `init` creates these flags in your local Flagsmith |
+| **Typed flags** | `src/flags.generated.js` from `flagkit codegen`: names, variants and descriptions. An unknown name throws in development instead of silently shipping the default |
+| **Offline-safe** | If Flagsmith is slow (more than 2 s) or down, flags fall back to their **Production** values from the last sync, not to "everything off". The `X-Flags-Source` header (or the footer in React) tells you which you got |
+| **The flag matrix** | `npm test` renders every page under **every state of every flag** (on/off, each variant), built from the generated file, so a new flag is covered as soon as you sync |
+| **Preview links** (React) | `?flags=pricing_layout=compact,checkout_v2=on` shows any variant without touching Flagsmith, for design review and QA. Previews record no exposures, so they can't skew a test |
+| **CI** | `.github/workflows/flags.yml`: `flagkit lint --flags-file` (fails on a flag name that doesn't exist, with no Flagsmith access needed) plus the matrix |
+
+## 🔎 `flagkit lint` and `flagkit codegen`: flags as code
+
+`lint` scans your repository for SDK calls (`hasFeature`, `getValue`, `getExperimentFlag`, `useFlags([...])`, Python, Go and more) and checks them against the project:
+```
+✖ unknown-flag  src/pricing.js:12  "welcom_message" is not a flag in this project. Did you mean "welcome_message"? Your code will silently get the default.
+⚠ stale-flag    src/app.js:40      checkout_v2: ON everywhere for 31 days: hard-code it and delete the flag (3 references)
+⚠ unused-flag   annual_first: no code references this flag: archive it
+```
+It exits 1 on errors, and with `GITHUB_ACTIONS` set it emits annotations (escaped so a flag name can't inject a workflow command). `codegen` writes the TypeScript or JS types plus the offline defaults, and embeds a JSON snapshot so `lint --flags-file` works in CI without credentials.
 
 ## 🩺 `flagkit doctor`: works on any self-hosted Flagsmith
 
@@ -127,21 +170,29 @@ Plan: baseline 8%, detect a lift of +44% (8% → 11.5%)
      → filed chg_955fe87bd828: send everyone back to control. A human approves in `flagkit tui` → Approvals or `flagkit approve chg_955fe87bd828`.
 ```
 
-## 🧩 VS Code extension: live flags in your code
+## 🧩 VS Code extension: live flags and typo checks in your code
 
-[`vscode-extension/`](vscode-extension/) shows, at the end of any line that mentions a flag, its live state in every environment and its experiment's chance to win:
+[`vscode-extension/`](vscode-extension/) (v0.2.0):
 ```js
 const flag = flagsmith.getExperimentFlag('hero_headline');   ● dev:control  ● stg:control  ● prod:control  🧪 #1 benefit 99.4%
 ```
-Hover the flag name for a table of every environment (value, variant weights, drift) plus the experiment and a link to it. It connects to the FlagKit stack with no setup (it reads `.flagkit/state.json`), or to Cloud and any self-hosted instance with **FlagKit: Connect to Flagsmith**; the key goes into VS Code's secret storage. It's read-only, and server text is rendered as plain text (no HTML, no command links). Install: `code --install-extension vscode-extension/flagkit-vscode-0.1.0.vsix`. It's tested inside real VS Code (`vscode-extension/test/run.js`).
+- **Inline state** at the end of any line that mentions a flag: every environment, plus the experiment's leading variant and its chance to win.
+- **Typo detection**: `flagsmith.getValue('hero_headlin')` gets a red squiggle, *"is not a flag in this Flagsmith project. Did you mean "hero_headline"?"*, and a **one-click quick fix**.
+- **Autocomplete** of flag names inside SDK calls, with each flag's live state per environment.
+- **Stale-flag hints**: a flag that's identical everywhere and untouched for 14 days is marked "hard-code it and delete it".
+- **CodeLens** above each flag call shows its state per environment. Click to toggle in Development or Staging, behind a modal confirmation. It never toggles Production (that goes through the audited panel) and never a flag in a running experiment.
+- **Hover**: a table of every environment (value, variant weights, drift), plus the experiment and a link to it.
+
+It connects to the FlagKit stack with no setup (it reads `.flagkit/state.json`), or to Cloud or any self-hosted instance with **FlagKit: Connect to Flagsmith**; the key goes into VS Code's secret storage. Server text is rendered as plain text, with no HTML and no command links. Install: `code --install-extension vscode-extension/flagkit-vscode-0.2.0.vsix`. An integration test inside real VS Code (`vscode-extension/test/run.js`) checks the hover, the diagnostic, the quick fix, completion and the CodeLens.
 
 ## 🖥 `flagkit tui`
 
-Four tabs:
-- **Flags**: every flag × environment. `space` toggles; Production asks first. `/` searches, and `≠` marks drift between environments.
+Five tabs:
+- **Flags**: every flag × environment. `space` toggles, `e` edits the value, `p` promotes the cell to the next environment (Development → Staging → Production). Production asks for a reason, every change is audited, and flags in a running experiment are locked. Markers: `≠` environments differ, `⌛` stale, `∅` unused in code, `🧪` in an experiment. `/` searches.
 - **Experiments**: every experiment in every environment, with conversion bars, lift, credible interval and chance to beat control. `s` ships the winner, only at ≥95% and only after confirming.
 - **Doctor**: live health checks.
 - **Approvals**: changes agents have proposed.
+- **Activity**: the audit log, shared with the panel. `u` undoes a change.
 
 ## 🤖 Track 02: `flagkit mcp`: agents propose, people approve
 
@@ -226,9 +277,11 @@ The stack and tools were reviewed before going live (see commit `Security harden
 ## Commands
 
 ```
-up / down [--wipe] / bootstrap / status       stack
+up [--demo] / down [--wipe] / bootstrap / status / snapshot save|restore|list
 doctor [--api-url] [--env-key] [--fix] [--json]
-tui                                           flags · experiments · doctor · approvals
+tui / panel                                   terminal and web admin
+set <flag> / audit / revert <id> / promote <from> <to> / schedule add|run|cancel
+init express|react / codegen / lint [--flags-file] [--format github]
 experiment create|results / simulate / demo / build-page
 plan / report <id> / tail / watch / explain <user>
 mcp / approvals [--all] / approve <id> / reject <id>
@@ -239,7 +292,8 @@ mcp / approvals [--all] / approve <id> / reject <id>
 - **Self-hosted Flagsmith** (official images and compose) is the backend of `up`, `doctor`, `tui` and `mcp`.
 - **Admin API**: bootstrap, features, multivariate options, environments, warehouse connections, metrics, experiments (create / start / results / refresh / complete-with-rollout-decision), feature states.
 - **Experimentation**: Bayesian results (`chance_to_win`, lift, credible interval), exposures, SRM.
-- **SDKs**: `@flagsmith/flagsmith` (browser, `getExperimentFlag`/`trackEvent`) and `@flagsmith/nodejs` (simulator).
+- **SDKs**: `@flagsmith/flagsmith` (browser and the React starter: `defaultFlags`, `cacheFlags`, `getExperimentFlag`, `trackEvent`) and `@flagsmith/nodejs` (simulator and the Express starter: `getIdentityFlags`, `getExperimentFlag`, `trackEvent`, `defaultFlagHandler`).
+- **Feature states and features metadata** (`last_modified_in_any_environment`, override counts): the panel, the TUI, promote, revert, schedules, lint's stale detection and codegen.
 - **Flagsmith CLI v2**: both Agent Skills, `flagkit report` on Cloud (through `flagsmith login`), and the CI journey.
 - **Identity evaluation** (`reason`, `variant`, experiment metadata, `transient` identities): `flagkit explain` and its MCP tool.
 - **The events table** behind self-hosted Experimentation: `flagkit tail`.
@@ -251,6 +305,6 @@ mcp / approvals [--all] / approve <id> / reject <id>
 npm test                 # unit tests
 node test/mcp-smoke.mjs  # MCP server against the local stack
 ```
-CI ([workflow](.github/workflows/ci.yml)) boots self-hosted Flagsmith on a clean runner, runs `doctor` as a gate, a simulated experiment, `plan`/`tail`/`explain`/`report`, a guardrail drill (a clearly worse variant must produce a pending kill request), both Agent Skills end to end with the official CLI, the report Action, the MCP smoke test, and security assertions. The VS Code extension has an integration test that runs inside real VS Code.
+CI ([workflow](.github/workflows/ci.yml)) boots self-hosted Flagsmith on a clean runner, runs `doctor` as a gate, a simulated experiment, `plan`/`tail`/`explain`/`report`, a guardrail drill (a clearly worse variant must produce a pending kill request), both Agent Skills end to end with the official CLI, the report Action and the MCP smoke test. It also checks audited changes and their guards (Production without a reason and a flag in a running experiment are both refused), revert, schedules, the panel's token/host checks, lint catching a typo, both starter templates (generated, installed, the flag matrix run, the Express app flipped live by the kill switch), a snapshot round trip, and security assertions. The VS Code extension has an integration test that runs inside real VS Code.
 
 MIT © 2026 Puneet Madan

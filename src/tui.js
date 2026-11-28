@@ -3,6 +3,9 @@
 //   2 Experiments  every experiment in every environment, live Bayesian results, guarded "ship the winner"
 //   3 Doctor       live health: silent event loss, security posture, CLI/SDK config
 //   4 Approvals    changes proposed by agents (MCP) — nothing is applied until a person approves here
+//   5 Activity     every change made through FlagKit, who/why/before→after, u to undo one
+// Flag changes go through src/changes.js: audited, Production needs a reason, experiment flags are locked.
+import os from 'node:os';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { render, Box, Text, useInput, useApp, useStdout } from 'ink';
 import { adminOf, featureIdOf } from './experiment.js';
@@ -10,6 +13,8 @@ import { summarise } from './results.js';
 import { runDoctor } from './doctor.js';
 import { listChanges, approveChange, rejectChange, describeParams, isProduction } from './approvals.js';
 import { clean } from './sanitize.js';
+import { setFlag, revert, auditLog } from './changes.js';
+import { lifecycle, scanCode } from './flags.js';
 
 // Everything from Flagsmith or from agents is cleaned of control characters as it is loaded,
 // so nothing the TUI renders can carry terminal escape sequences.
@@ -27,7 +32,11 @@ const bar = (p, w = 18) => {
   const n = Math.max(0, Math.min(w, Math.round((p ?? 0) * w)));
   return '█'.repeat(n) + '░'.repeat(w - n);
 };
-const TABS = [['flags', '1 Flags'], ['exp', '2 Experiments'], ['doctor', '3 Doctor'], ['appr', '4 Approvals']];
+const TABS = [['flags', '1 Flags'], ['exp', '2 Experiments'], ['doctor', '3 Doctor'], ['appr', '4 Approvals'], ['act', '5 Activity']];
+// Apply typed input to a text field: DEL/BS delete (pasted or batched keys arrive as one string), other control characters are dropped.
+const typeInto = (s, input) => { let out = s; for (const ch of input) { if (ch === '\x7f' || ch === '\b') out = out.slice(0, -1); else if (!/[\u0000-\u001f\u007f-\u009f]/.test(ch)) out += ch; } return out; };
+const ACTOR = (() => { try { return os.userInfo().username; } catch { return 'tui'; } })();
+const LC = { stale: ['⌛', 'yellow', 'stale: same everywhere and untouched, remove it'], unused: ['∅', 'gray', 'unused: no code references it'], experiment: ['🧪', 'magenta', 'in a running experiment: locked'] };
 const ICON = { pass: ['✔', 'green'], warn: ['⚠', 'yellow'], fail: ['✖', 'red'], skip: ['·', 'gray'] };
 
 function useFlags(state, api) {
@@ -75,6 +84,12 @@ function App({ state }) {
   const [{ features, cells, error, loading }, reloadFlags] = useFlags(state, api);
   const [experiments, reloadExps] = useExperiments(state, api);
   const [doctor, setDoctor] = useState(null);
+  const [refs, setRefs] = useState(null);
+  useEffect(() => { try { setRefs(scanCode(process.cwd(), features.map((f) => f.name)).refs); } catch { setRefs(null); } }, [features.length]);
+  const [prompt, setPrompt] = useState(null); // { label, value, onSubmit }
+  const [audit, setAudit] = useState([]);
+  const [acRow, setAcRow] = useState(0);
+  useEffect(() => { const load = () => setAudit(cleanObj(auditLog({ limit: 100 }))); load(); const t = setInterval(load, 3000); return () => clearInterval(t); }, []);
   const [row, setRow] = useState(0);
   const [col, setCol] = useState(0);
   const [expRow, setExpRow] = useState(0);
@@ -107,25 +122,51 @@ function App({ state }) {
   const shown = features.filter((f) => !query || f.name.toLowerCase().includes(query.toLowerCase()));
   const cellOf = (f, e) => cells[`${f.id}:${e.id}`];
   const drift = (f) => {
-    const sigs = state.environments.map((e) => { const c = cellOf(f, e); return c ? `${c.enabled}|${valueOf(c.feature_state_value)}` : '-'; });
+    const sigs = state.environments.map((e) => { const c = cellOf(f, e); return c ? `${c.enabled}|${valueOf(c.feature_state_value) ?? ''}` : '-'; });
     return new Set(sigs).size > 1;
   };
   const selExp = experiments[Math.min(expRow, Math.max(0, experiments.length - 1))];
   const best = selExp?.summary.rows.filter((r) => !r.isControl).sort((a, b) => (b.win ?? 0) - (a.win ?? 0))[0];
 
-  async function toggle(confirmed = false) {
+  const lcOf = (f) => {
+    const envs = Object.fromEntries(state.environments.map((e) => { const c = cellOf(f, e); return [e.name, c ? { enabled: c.enabled, value: valueOf(c.feature_state_value) } : null]; }));
+    const running = experiments.filter((x) => x.status === 'running' && (x.feature?.id ?? x.feature) === f.id).map((x) => ({ id: x.id, env: x.env.name }));
+    return lifecycle({ ...f, envs, experiments: running, lastModified: f.last_modified_in_any_environment || f.created_date, segmentOverrides: f.num_segment_overrides, identityOverrides: f.num_identity_overrides }, { refs: refs ? refs[f.name] || [] : undefined });
+  };
+
+  // Every change: audited; Production asks for a reason first; experiment flags are refused by setFlag.
+  async function applyChange(f, env, patch, reason) {
+    try {
+      const r = await setFlag(state, { flag: f.name, env: env.name, ...patch }, { actor: ACTOR, reason, via: 'tui' });
+      setMsg(r.noop ? 'already in that state' : `✔ ${f.name} in ${env.name}: ${r.before.enabled ? 'on' : 'off'} ${clean(String(r.before.value ?? ''))} → ${r.after.enabled ? 'on' : 'off'} ${clean(String(r.after.value ?? ''))}  (u in Activity to undo)`);
+      reloadFlags();
+    } catch (e) { setMsg(`✖ ${clean(e.message.slice(0, 160))}`); }
+  }
+  function change(f, env, patch, what) {
+    if (/prod/i.test(env.name)) setPrompt({ label: `PRODUCTION: ${what}. Reason (Enter to apply, Esc to cancel): `, value: '', onSubmit: (reason) => applyChange(f, env, patch, reason) });
+    else applyChange(f, env, patch, '');
+  }
+  function toggle() {
+    const f = shown[row]; const env = state.environments[col];
+    const cell = f && cellOf(f, env);
+    if (cell) change(f, env, { enabled: !cell.enabled }, `turn ${f.name} ${cell.enabled ? 'OFF' : 'ON'}`);
+  }
+  function editValue() {
     const f = shown[row]; const env = state.environments[col];
     const cell = f && cellOf(f, env);
     if (!cell) return;
-    if (/prod/i.test(env.name) && !confirmed) {
-      setConfirm({ type: 'toggle', text: `Turn "${f.name}" ${cell.enabled ? 'OFF' : 'ON'} in ${env.name}?` });
-      return;
-    }
-    try {
-      await api.patch(`environments/${env.api_key}/featurestates/${cell.id}/`, { enabled: !cell.enabled });
-      setMsg(`✔ ${f.name} → ${!cell.enabled ? 'ON' : 'OFF'} in ${env.name}`);
-      reloadFlags();
-    } catch (e) { setMsg(`✖ ${clean(e.message.slice(0, 140))}`); }
+    setPrompt({ label: `${f.name} value in ${env.name}: `, value: String(valueOf(cell.feature_state_value) ?? ''), onSubmit: (v) => change(f, env, { value: v }, `set ${f.name} = ${v}`) });
+  }
+  // Copy the selected cell's state to the next environment to the right (Development → Staging → Production).
+  function promoteCell() {
+    const f = shown[row]; const from = state.environments[col]; const to = state.environments[col + 1];
+    const a = f && cellOf(f, from); const b = f && to && cellOf(f, to);
+    if (!a || !b) { setMsg('nothing to the right to promote to'); return; }
+    const va = valueOf(a.feature_state_value), vb = valueOf(b.feature_state_value);
+    if (a.enabled === b.enabled && String(va ?? '') === String(vb ?? '')) { setMsg(`${to.name} already matches ${from.name}`); return; }
+    const what = `promote ${f.name} ${from.name} → ${to.name} (${b.enabled ? 'on' : 'off'} ${vb ?? ''} → ${a.enabled ? 'on' : 'off'} ${va ?? ''})`;
+    if (/prod/i.test(to.name)) change(f, to, { enabled: a.enabled, value: va }, what);
+    else setConfirm({ type: 'promote', text: `${what}?`, run: () => applyChange(f, to, { enabled: a.enabled, value: va }, `promote ${from.name} → ${to.name}`) });
   }
 
   async function shipWinner(x, winner) {
@@ -143,10 +184,17 @@ function App({ state }) {
   }
 
   useInput((input, key) => {
+    if (prompt) {
+      if (key.escape) { setPrompt(null); setMsg('cancelled: nothing changed'); return; }
+      if (key.return) { const p = prompt; setPrompt(null); p.onSubmit(p.value); return; }
+      if (key.backspace || key.delete) { setPrompt((p) => ({ ...p, value: p.value.slice(0, -1) })); return; }
+      if (input && !key.ctrl && !key.meta) setPrompt((p) => ({ ...p, value: typeInto(p.value, input).slice(0, 500) }));
+      return;
+    }
     if (confirm) {
       const c = confirm; setConfirm(null);
       if (input === 'y') {
-        if (c.type === 'toggle') toggle(true);
+        if (c.type === 'promote' || c.type === 'undo') c.run();
         else if (c.type === 'ship') shipWinner(c.exp, c.winner);
         // Pass the exact record that was shown, so a different change can never be applied in its place.
         else if (c.type === 'approve') approveChange(state, c.id, c.shown).then((r) => { setMsg(`${r.status === 'applied' ? '✔ applied' : '✖ failed'} ${c.id}: ${clean(r.result)}`); setChanges(cleanObj(listChanges())); reloadFlags(); reloadExps(); }).catch((e) => setMsg(`✖ ${clean(e.message)}`));
@@ -158,20 +206,22 @@ function App({ state }) {
     if (searching) {
       if (key.return || key.escape) { setSearching(false); if (key.escape) setQuery(''); return; }
       if (key.backspace || key.delete) { setQuery((q) => q.slice(0, -1)); setRow(0); return; }
-      if (input && !key.ctrl) { setQuery((q) => q + input); setRow(0); }
+      if (input && !key.ctrl) { setQuery((q) => typeInto(q, input)); setRow(0); }
       return;
     }
     if (input === 'q' || (key.escape && !query)) exit();
     if (key.escape) setQuery('');
     const idx = TABS.findIndex(([k]) => k === tab);
     if (key.tab) setTab(TABS[(idx + (key.shift ? TABS.length - 1 : 1)) % TABS.length][0]);
-    if (['1', '2', '3', '4'].includes(input)) setTab(TABS[Number(input) - 1][0]);
+    if (['1', '2', '3', '4', '5'].includes(input)) setTab(TABS[Number(input) - 1][0]);
     if (tab === 'flags') {
       if (key.upArrow) setRow((r) => Math.max(0, r - 1));
       if (key.downArrow) setRow((r) => Math.min(shown.length - 1, r + 1));
       if (key.leftArrow) setCol((c) => Math.max(0, c - 1));
       if (key.rightArrow) setCol((c) => Math.min(state.environments.length - 1, c + 1));
       if (input === ' ') toggle();
+      if (input === 'e') editValue();
+      if (input === 'p') promoteCell();
       if (input === '/') { setSearching(true); setQuery(''); }
       if (input === 'r') { reloadFlags(); setMsg('reloaded'); }
     } else if (tab === 'exp') {
@@ -183,6 +233,17 @@ function App({ state }) {
         else setConfirm({ type: 'ship', exp: selExp, winner: best.key, text: `End #${selExp.id} and roll out "${best.key}" (${pct(best.win)} chance to win) to ALL of ${selExp.env.name}?` });
       }
     } else if (tab === 'doctor' && input === 'r') runDoc();
+    else if (tab === 'act') {
+      if (key.upArrow) setAcRow((r) => Math.max(0, r - 1));
+      if (key.downArrow) setAcRow((r) => Math.min(audit.length - 1, r + 1));
+      const a = audit[acRow];
+      if (a && input === 'u') {
+        const st = (x) => `${x.enabled ? 'on' : 'off'} ${x.value ?? ''}`;
+        const undo = (reason) => revert(state, a.id, { actor: ACTOR, reason, via: 'tui' }).then((r) => { setMsg(r.noop ? 'already in that state' : `✔ undone: ${a.flag} in ${a.env} is back to ${st(a.before)}`); reloadFlags(); }).catch((e) => setMsg(`✖ ${clean(e.message)}`));
+        if (/prod/i.test(a.env)) setPrompt({ label: `PRODUCTION: undo ${a.flag} (${st(a.after)} → ${st(a.before)}). Reason: `, value: '', onSubmit: undo });
+        else setConfirm({ type: 'undo', text: `Undo: put ${a.flag} in ${a.env} back to ${st(a.before)}?`, run: () => undo(`undo ${a.id}`) });
+      }
+    }
     else if (tab === 'appr') {
       const sel = changes[apRow];
       if (key.upArrow) setApRow((r) => Math.max(0, r - 1));
@@ -196,7 +257,7 @@ function App({ state }) {
 
   // ── header ──
   const header = h(Box, { borderStyle: 'round', borderColor: 'cyan', paddingX: 1, justifyContent: 'space-between', width },
-    h(Text, null, h(Text, { bold: true, color: 'cyan' }, '⚑ flagkit '), h(Text, { color: healthy == null ? 'gray' : healthy ? 'green' : 'red' }, healthy == null ? '○' : '●'), h(Text, { dimColor: true }, ` ${state.project.name} · ${state.apiUrl}`)),
+    h(Text, null, h(Text, { bold: true, color: 'cyan' }, '⚑ flagkit '), h(Text, { color: healthy == null ? 'gray' : healthy ? 'green' : 'red' }, healthy == null ? '○' : '●'), h(Text, { dimColor: true }, ` ${state.project.name}`)),
     h(Text, null, ...TABS.flatMap(([k, label]) => [h(Text, { key: k, inverse: tab === k, color: tab === k ? 'cyan' : k === 'appr' && pending.length ? 'yellow' : undefined, bold: tab === k || (k === 'appr' && pending.length > 0) }, ` ${label}${k === 'appr' && pending.length ? ` (${pending.length})` : ''} `), ' '])),
   );
 
@@ -215,16 +276,18 @@ function App({ state }) {
         return h(Box, { key: f.id },
           h(Text, { color: sel ? 'cyan' : undefined, bold: sel }, `${sel ? '› ' : '  '}${f.name.slice(0, W - 6).padEnd(W - 5)}`),
           h(Text, { color: 'magenta' }, d ? '≠ ' : '  '),
+          (() => { const lc = LC[lcOf(f).status]; return h(Text, { color: lc?.[1] }, lc ? `${lc[0]} `.slice(0, 2).padEnd(2) : '  '); })(),
           h(Text, { dimColor: true }, f.type === 'MULTIVARIATE' ? 'mv ' : '   '),
           ...state.environments.map((e, j) => {
             const c = cellOf(f, e);
             const v = c ? valueOf(c.feature_state_value) : null;
-            const label = c ? `${c.enabled ? '● on ' : '○ off'}${v != null && v !== '' ? ` ${String(v).slice(0, 9)}` : ''}` : '  —';
+            const label = c ? `${c.enabled ? '● on ' : '○ off'}${v != null && v !== '' ? ` ${String(v).slice(0, 8)}` : ''}` : '  —';
             return h(Text, { key: e.id, color: c?.enabled ? 'green' : 'gray', inverse: sel && j === col }, label.padEnd(15), ' ');
           }));
       }),
       !loading && shown.length === 0 ? h(Text, { dimColor: true }, query ? 'No flags match.' : 'No flags yet. Try `flagkit experiment create`.') : null,
-      h(Text, { dimColor: true }, '\n≠ value or state differs between environments'),
+      h(Text, { dimColor: true }, '\n≠ envs differ  ⌛ stale  ∅ unused in code  🧪 in experiment (locked)'),
+      shown[row] ? h(Text, { dimColor: true }, (() => { const lc = lcOf(shown[row]); return lc.advice ? `${shown[row].name}: ${lc.advice}` : ' '; })()) : null,
     );
   } else if (tab === 'exp') {
     body = h(Box, { flexDirection: 'column', paddingX: 1 },
@@ -275,6 +338,18 @@ function App({ state }) {
         sel.result ? h(Text, { color: color[sel.status] }, `→ ${sel.result}`) : null,
       ) : null,
     );
+  } else if (tab === 'act') {
+    const st = (x) => `${x.enabled ? 'on' : 'off'}${x.value != null && x.value !== '' ? ` ${String(x.value).slice(0, 14)}` : ''}`;
+    body = h(Box, { flexDirection: 'column', paddingX: 1 },
+      audit.length === 0 ? h(Text, { dimColor: true }, 'No changes yet. Changes from the TUI, `flagkit panel`, schedules and promote show up here.') : null,
+      ...audit.slice(0, 12).flatMap((a, i) => [
+        h(Text, { key: a.id, color: i === acRow ? 'cyan' : undefined, bold: i === acRow },
+          `${i === acRow ? '› ' : '  '}${a.at.slice(5, 16).replace('T', ' ')}  `,
+          h(Text, { color: /prod/i.test(a.env) ? 'red' : undefined }, a.env.slice(0, 11).padEnd(12)),
+          `${a.flag.slice(0, 22).padEnd(23)}`, h(Text, { dimColor: true }, st(a.before).padEnd(19)), '→ ', h(Text, { color: 'cyan' }, st(a.after))),
+        h(Text, { key: `${a.id}-w`, dimColor: true }, `      ${a.actor} via ${a.via}${a.reason ? `: ${a.reason}` : ''}`.slice(0, width - 4)),
+      ]),
+    );
   } else {
     const order = ['Reachability', 'Security', 'Experimentation', 'SDK', 'CLI', 'Admin'];
     const rows = [...(doctor?.results || [])].sort((a, b) => order.indexOf(a.section) - order.indexOf(b.section));
@@ -294,15 +369,17 @@ function App({ state }) {
   }
 
   const hints = {
-    flags: '↑↓←→ move  space toggle  / search  r reload',
+    flags: '↑↓←→ move  space toggle  e edit value  p promote → right  / search  r reload',
     exp: '↑↓ select  r refresh results  s ship winner',
     doctor: 'r re-run checks',
     appr: '↑↓ select  a approve & apply  x reject',
+    act: '↑↓ select  u undo this change',
   }[tab];
   const footer = h(Box, { flexDirection: 'column', paddingX: 1, marginTop: 1 },
+    prompt ? h(Box, { borderStyle: 'round', borderColor: /PRODUCTION/.test(prompt.label) ? 'red' : 'cyan', paddingX: 1 }, h(Text, { bold: true }, prompt.label), h(Text, null, `${prompt.value}▏`)) : null,
     confirm ? h(Box, { borderStyle: 'round', borderColor: 'yellow', paddingX: 1 }, h(Text, { color: 'yellow', bold: true }, `⚠ ${confirm.text}  `), h(Text, null, '[y] yes  [any key] cancel')) : null,
     error ? h(Text, { color: 'red' }, `✖ ${error}`) : msg ? h(Text, { color: msg.startsWith('✖') ? 'red' : 'magenta' }, msg) : null,
-    h(Text, { dimColor: true }, `${hints}  ·  tab/1-4 switch  ·  q quit`),
+    h(Text, { dimColor: true }, `${hints}  ·  tab/1-5 switch  ·  q quit`),
   );
 
   return h(Box, { flexDirection: 'column' }, header, body, footer);

@@ -1,7 +1,7 @@
 {
   "name": "flagsmith-kit",
-  "version": "0.3.0",
-  "description": "Self-hosted Flagsmith + Experimentation in one command: zero-click bootstrap, a doctor that finds silent breakage, a terminal dashboard, an MCP server and an agent skill.",
+  "version": "0.4.0",
+  "description": "Self-hosted Flagsmith in one command, plus an admin panel, starter apps with typed flags, flag lint for CI, a doctor, a terminal dashboard, an MCP server and Agent Skills.",
   "type": "module",
   "bin": {
     "flagkit": "bin/flagkit.js",
@@ -12,6 +12,8 @@
     "src",
     "stack",
     "demo-app",
+    "panel",
+    "templates",
     "skills",
     "README.md",
     "LICENSE"
@@ -43,7 +45,11 @@
     "tui",
     "mcp",
     "agent-skill",
-    "flagsmith-cli"
+    "flagsmith-cli",
+    "admin-panel",
+    "codegen",
+    "lint",
+    "starter-template"
   ],
   "dependencies": {
     "@flagsmith/flagsmith": "^12.6.0",

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>FlagKit Admin</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo">⚑</span> FlagKit <span id="project" class="muted"></span></div>
+    <nav id="tabs" class="tabs" role="tablist"></nav>
+    <label class="who">Your name <input id="actor" placeholder="for the audit log" maxlength="80" autocomplete="name"></label>
+  </header>
+  <main id="main"><p class="muted pad">Loading…</p></main>
+  <aside id="drawer" class="drawer" hidden></aside>
+  <dialog id="modal"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

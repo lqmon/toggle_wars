@@ -1,0 +1,6 @@
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+.plans { display: grid; gap: 12px; margin-top: 16px; }
+.plans.compact { grid-template-columns: repeat(3, 1fr); }
+.plan { border: 1px solid #ddd; border-radius: 10px; padding: 14px; }
+button { padding: 8px 14px; border-radius: 8px; border: 0; background: #111; color: #fff; cursor: pointer; }
+small { color: #777; }

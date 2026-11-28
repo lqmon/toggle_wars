@@ -3,9 +3,11 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { findFlagRefs, Client, loadProject, inlineText, hoverMarkdown, dashboardOf } = require('./lib');
+const { findFlagRefs, findFlagCalls, suggest, lifecycleOf, Client, loadProject, inlineText, hoverMarkdown, dashboardOf, clean, abbr } = require('./lib');
 
 let data = null;
+let diagnostics;
+const lensChanged = new vscode.EventEmitter();
 let conn = null;
 let timer = null;
 const deco = vscode.window.createTextEditorDecorationType({ after: { color: new vscode.ThemeColor('editorCodeLens.foreground'), margin: '0 0 0 1em', fontStyle: 'italic' } });
@@ -67,7 +69,103 @@ function redraw(editor) {
   }
   editor.setDecorations(deco, opts);
 }
-const redrawAll = () => vscode.window.visibleTextEditors.forEach(redraw);
+const redrawAll = () => { vscode.window.visibleTextEditors.forEach(redraw); vscode.workspace.textDocuments.forEach(diagnose); lensChanged.fire(); };
+
+const DOC_SELECTOR = [{ scheme: 'file' }, { scheme: 'untitled' }];
+const isCode = (doc) => !['plaintext', 'markdown', 'json', 'jsonc', 'yaml', 'log', 'git-commit', 'scminput'].includes(doc.languageId) && doc.lineCount <= 20000;
+
+// Problems panel: flag names that don't exist (a typo ships the default to everyone), and stale flags.
+function diagnose(doc) {
+  if (!diagnostics || !['file', 'untitled'].includes(doc.uri.scheme)) return;
+  if (!data || !isCode(doc)) return diagnostics.delete(doc.uri);
+  const names = Object.keys(data.flags);
+  const text = doc.getText();
+  const out = [];
+  for (const c of findFlagCalls(text)) {
+    if (!c.name || data.flags[c.name]) continue;
+    const s = suggest(c.name, names);
+    const d = new vscode.Diagnostic(new vscode.Range(doc.positionAt(c.start), doc.positionAt(c.end)),
+      `"${clean(c.name)}" is not a flag in this Flagsmith project${s ? `. Did you mean "${s}"?` : ''} This code will always get the default.`, vscode.DiagnosticSeverity.Error);
+    d.source = 'FlagKit'; d.code = 'unknown-flag';
+    if (s) d.suggestion = s;
+    out.push(d);
+  }
+  const staleDays = vscode.workspace.getConfiguration('flagkit').get('staleDays', 14);
+  const seen = new Set();
+  for (const r of findFlagRefs(text, new Set(names))) {
+    const lc = lifecycleOf(data.flags[r.flag], { staleDays });
+    if (lc.status !== 'stale' || seen.has(r.start)) continue;
+    seen.add(r.start);
+    const d = new vscode.Diagnostic(new vscode.Range(doc.positionAt(r.start), doc.positionAt(r.end)), lc.advice, vscode.DiagnosticSeverity.Information);
+    d.source = 'FlagKit'; d.code = 'stale-flag';
+    out.push(d);
+  }
+  diagnostics.set(doc.uri, out);
+}
+
+// Quick fix: replace the unknown name with the closest real flag.
+const codeActions = {
+  provideCodeActions(doc, _range, ctx) {
+    return ctx.diagnostics.filter((d) => d.source === 'FlagKit' && d.code === 'unknown-flag' && d.suggestion).map((d) => {
+      const a = new vscode.CodeAction(`Change to "${d.suggestion}"`, vscode.CodeActionKind.QuickFix);
+      a.edit = new vscode.WorkspaceEdit();
+      a.edit.replace(doc.uri, d.range, d.suggestion);
+      a.diagnostics = [d];
+      a.isPreferred = true;
+      return a;
+    });
+  },
+};
+
+// Autocomplete flag names inside SDK calls, with each flag's live state as the detail.
+const completion = {
+  provideCompletionItems(doc, pos) {
+    if (!data) return [];
+    const line = doc.lineAt(pos.line).text.slice(0, pos.character);
+    if (!/(['"`])[\w.-]*$/.test(line)) return [];
+    if (!findFlagCalls(`${line}')`).length) return [];
+    const quote = /(['"`])([\w.-]*)$/.exec(line);
+    const range = new vscode.Range(pos.translate(0, -quote[2].length), pos);
+    return Object.values(data.flags).map((f) => {
+      const item = new vscode.CompletionItem(f.name, vscode.CompletionItemKind.EnumMember);
+      item.range = range;
+      item.detail = f.envs.map((e) => `${abbr(e.name)} ${e.enabled ? 'on' : 'off'}`).join(' · ') + (f.experiments.some((x) => x.status === 'running') ? ' · 🧪' : '');
+      const doc2 = new vscode.MarkdownString(hoverMarkdown(f, dashboardOf(conn?.apiUrl), conn?.projectId));
+      doc2.isTrusted = false;
+      item.documentation = doc2;
+      return item;
+    });
+  },
+};
+
+// CodeLens above a line that uses a flag: its state per environment, click to toggle (not Production).
+const codeLens = {
+  onDidChangeCodeLenses: lensChanged.event,
+  provideCodeLenses(doc) {
+    if (!data || !vscode.workspace.getConfiguration('flagkit').get('codeLens', true) || !isCode(doc)) return [];
+    const lenses = [];
+    const lines = new Set();
+    for (const c of findFlagCalls(doc.getText())) {
+      const f = data.flags[c.name];
+      const line = doc.positionAt(c.start).line;
+      if (!f || lines.has(line)) continue;
+      lines.add(line);
+      const range = new vscode.Range(line, 0, line, 0);
+      for (const e of f.envs) {
+        const prod = /prod/i.test(e.name);
+        lenses.push(new vscode.CodeLens(range, prod
+          ? { title: `${e.enabled ? '●' : '○'} ${e.name}`, tooltip: 'Production changes go through `flagkit panel` (reason + audit log)', command: '' }
+          : { title: `${e.enabled ? '●' : '○'} ${e.name}`, tooltip: `Turn ${f.name} ${e.enabled ? 'OFF' : 'ON'} in ${e.name}`, command: 'flagkit.toggle', arguments: [f.name, e.name] }));
+      }
+      const lc = lifecycleOf(f);
+      if (lc.status === 'experiment') {
+        const x = f.experiments.find((y) => y.status === 'running');
+        lenses.push(new vscode.CodeLens(range, { title: `🧪 #${x.id}${x.best ? ` ${clean(x.best.key)} ${(x.best.win * 100).toFixed(0)}%` : ''}: don't toggle mid-test`, command: '' }));
+      }
+    }
+    return lenses;
+  },
+};
 
 let status;
 
@@ -77,7 +175,17 @@ function activate(ctx) {
   status.show();
   ctx.subscriptions.push(status, deco);
 
-  ctx.subscriptions.push(vscode.languages.registerHoverProvider([{ scheme: 'file' }, { scheme: 'untitled' }], {
+  diagnostics = vscode.languages.createDiagnosticCollection('flagkit');
+  ctx.subscriptions.push(
+    diagnostics,
+    vscode.languages.registerCodeActionsProvider(DOC_SELECTOR, codeActions, { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] }),
+    vscode.languages.registerCompletionItemProvider(DOC_SELECTOR, completion, "'", '"', '`'),
+    vscode.languages.registerCodeLensProvider(DOC_SELECTOR, codeLens),
+    vscode.workspace.onDidOpenTextDocument(diagnose),
+    vscode.workspace.onDidCloseTextDocument((d) => diagnostics.delete(d.uri)),
+  );
+
+  ctx.subscriptions.push(vscode.languages.registerHoverProvider(DOC_SELECTOR, {
     provideHover(doc, pos) {
       if (!data) return null;
       const range = doc.getWordRangeAtPosition(pos, /[A-Za-z0-9_.-]+/);
@@ -93,6 +201,23 @@ function activate(ctx) {
 
   ctx.subscriptions.push(
     vscode.commands.registerCommand('flagkit.refresh', () => refresh(ctx, { quiet: false })),
+    // Toggle from the editor. Never Production (that goes through the panel, with a reason and an audit trail),
+    // never a flag inside a running experiment, and always behind a modal confirmation.
+    vscode.commands.registerCommand('flagkit.toggle', async (flagName, envName) => {
+      const f = data?.flags[flagName];
+      const e = f?.envs.find((x) => x.name === envName);
+      if (!f || !e) return;
+      if (/prod/i.test(e.name)) return vscode.window.showWarningMessage('FlagKit: Production changes go through `flagkit panel`, where they need a reason and are audited.');
+      const x = f.experiments.find((y) => y.status === 'running' && y.env === e.name);
+      if (x) return vscode.window.showWarningMessage(`FlagKit: ${f.name} is in running experiment #${x.id} in ${e.name}. Toggling it now corrupts the result.`);
+      const pick = await vscode.window.showWarningMessage(`Turn ${f.name} ${e.enabled ? 'OFF' : 'ON'} in ${e.name}?`, { modal: true }, 'Yes');
+      if (pick !== 'Yes') return;
+      try {
+        await new Client({ apiUrl: conn.apiUrl, key: conn.key }).patch(`environments/${encodeURIComponent(e.key)}/featurestates/${Number(e.stateId)}/`, { enabled: !e.enabled });
+        vscode.window.setStatusBarMessage(`FlagKit: ${f.name} ${e.enabled ? 'OFF' : 'ON'} in ${e.name}`, 4000);
+        await refresh(ctx);
+      } catch (err) { vscode.window.showErrorMessage(`FlagKit: ${err.message}`); }
+    }),
     vscode.commands.registerCommand('flagkit.connect', async () => {
       const cfg = vscode.workspace.getConfiguration('flagkit');
       const apiUrl = await vscode.window.showInputBox({ prompt: 'Flagsmith API URL', value: cfg.get('apiUrl') || 'https://api.flagsmith.com', ignoreFocusOut: true });
@@ -109,7 +234,7 @@ function activate(ctx) {
     vscode.commands.registerCommand('flagkit.disconnect', async () => { await ctx.secrets.delete('flagkit.apiKey'); await refresh(ctx); }),
     vscode.window.onDidChangeActiveTextEditor(redraw),
     vscode.window.onDidChangeVisibleTextEditors(redrawAll),
-    vscode.workspace.onDidChangeTextDocument((e) => vscode.window.visibleTextEditors.filter((ed) => ed.document === e.document).forEach(redraw)),
+    vscode.workspace.onDidChangeTextDocument((e) => { vscode.window.visibleTextEditors.filter((ed) => ed.document === e.document).forEach(redraw); diagnose(e.document); }),
     vscode.workspace.onDidChangeConfiguration((e) => e.affectsConfiguration('flagkit') && refresh(ctx)),
   );
 

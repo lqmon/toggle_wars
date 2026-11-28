@@ -31,10 +31,19 @@ node bin/flagkit.js experiment results    # asks Flagsmith to compute; wait a mi
 - Tab 2: experiment with bars and 98% chance to win → press `s` → confirm → shipped.
 - Tab 3: doctor inside the dashboard.
 
+## 1:45 – 2:05 · `flagkit panel` + `flagkit init` (Track 3)
+- `node bin/flagkit.js panel` → enter your name → toggle `checkout_v2` in Staging → the modal shows before → after.
+- Try Production: a reason is required and you type the flag name. Try `hero_headline`: 🧪 locked mid-experiment.
+- Promote tab: Staging → Production preview. Activity tab: **Revert**. User lookup: "why does customer-4821 see this?"
+- `node bin/flagkit.js init express /tmp/shop && cd /tmp/shop && npm i && npm test` → the flag matrix (every flag state on every page).
+- `npm run dev`, then in the panel turn `maintenance_mode` ON in Development → reload → maintenance page; Revert → back.
+> "Flags for people who don't write code, with the guard rails production needs."
+
 ## 2:05 – 2:25 · VS Code extension (Track 3)
-- `code --install-extension vscode-extension/flagkit-vscode-0.1.0.vsix`, then open `demo-app/index.html` in this repo.
+- `code --install-extension vscode-extension/flagkit-vscode-0.2.0.vsix`, then open `demo-app/index.html` in this repo.
 - Point at the grey text at the end of the `hero_headline` line: live state per environment + `🧪 #1 benefit 99.4%`.
-- Hover the flag name → the table and the experiment. Toggle the flag in the TUI → within a minute the inline text changes.
+- Hover the flag name → the table and the experiment. Type `flagsmith.getValue('hero_headlin')` → red squiggle, "Did you mean hero_headline?", quick fix.
+- Type `hasFeature('` → autocomplete lists every flag with its live state. CodeLens above the call → click "Development" to toggle.
 > "Your editor knows what production is doing."
 
 ## 2:25 – 3:05 · Agent + MCP with human approval (Track 2)

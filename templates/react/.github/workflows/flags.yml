@@ -1,0 +1,17 @@
+name: flags
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  flags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      # Fails the build when code asks for a flag that does not exist (a typo would ship the default to everyone).
+      # Reads the committed flags.generated.js: no Flagsmith access needed in CI.
+      - run: npx flagkit lint --flags-file src/flags.generated.js --format github
+      # Every flag state on every page.
+      - run: npm test

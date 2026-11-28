@@ -139,7 +139,7 @@ async function apply(state, c) {
     }
     case 'set_flag_value': {
       const { api, env, fs } = await findFeatureState(state, p.flag, p.environment);
-      await api.patch(`environments/${env.api_key}/featurestates/${fs.id}/`, { feature_state_value: { type: 'unicode', string_value: String(p.value) } });
+      await api.patch(`environments/${env.api_key}/featurestates/${fs.id}/`, { feature_state_value: String(p.value) });
       return `${p.flag} = ${clean(p.value)} in ${env.name}`;
     }
     case 'ship_winner':

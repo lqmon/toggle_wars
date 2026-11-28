@@ -9,7 +9,7 @@ import { envOf, DEMO } from './experiment.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 
-export function serveDemo(state, { port = 3000, envName = 'Development' } = {}) {
+export function serveDemo(state, { port = 3000, envName = 'Development', tries = 0 } = {}) {
   const env = envOf(state, envName);
   const sdkPath = path.join(path.dirname(require.resolve('@flagsmith/flagsmith')), 'index.mjs');
   const config = {
@@ -24,7 +24,7 @@ export function serveDemo(state, { port = 3000, envName = 'Development' } = {}) 
     '/config.js': ['text/javascript', () => `window.FLAGKIT_CONFIG = ${JSON.stringify(config)};`],
     '/sdk.mjs': ['text/javascript', () => fs.readFileSync(sdkPath)],
   };
-  http
+  const server = http
     .createServer((req, res) => {
       const route = routes[new URL(req.url, 'http://x').pathname];
       if (!route) { res.writeHead(404).end('not found'); return; }
@@ -39,8 +39,14 @@ export function serveDemo(state, { port = 3000, envName = 'Development' } = {}) 
         'Content-Security-Policy': `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' ${new URL(state.apiUrl).origin}; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
       }).end(route[1]());
     })
+    .on('error', (e) => {
+      // Port taken (often an earlier `flagkit demo`): try the next one rather than crash.
+      if (e.code === 'EADDRINUSE' && tries < 10) { console.log(`  port ${port} is busy, trying ${port + 1}`); serveDemo(state, { port: port + 1, envName, tries: tries + 1 }); return; }
+      throw e;
+    })
     .listen(port, '127.0.0.1', () => {
       console.log(`✔ Demo landing page on http://localhost:${port}  (environment ${env.name}, flag "${config.flag}")`);
       console.log('  Each new browser profile / private window is a new visitor. Ctrl+C to stop.');
     });
+  return server;
 }

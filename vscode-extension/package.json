@@ -1,8 +1,8 @@
 {
   "name": "flagkit-vscode",
   "displayName": "FlagKit: live Flagsmith flags",
-  "description": "See each Flagsmith flag's live state in every environment, and its experiment's chance to win, right next to the flag name in your code.",
-  "version": "0.1.0",
+  "description": "Live Flagsmith flag state next to the flag name in your code, typo detection with one-click fixes, flag-name autocomplete, stale-flag hints and guarded toggles.",
+  "version": "0.2.0",
   "publisher": "lqmon",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/lqmon/toggle_wars" },
@@ -15,7 +15,8 @@
     "commands": [
       { "command": "flagkit.connect", "title": "FlagKit: Connect to Flagsmith" },
       { "command": "flagkit.refresh", "title": "FlagKit: Refresh flags" },
-      { "command": "flagkit.disconnect", "title": "FlagKit: Forget API key" }
+      { "command": "flagkit.disconnect", "title": "FlagKit: Forget API key" },
+      { "command": "flagkit.toggle", "title": "FlagKit: Toggle flag (non-production)" }
     ],
     "configuration": {
       "title": "FlagKit",
@@ -23,7 +24,9 @@
         "flagkit.apiUrl": { "type": "string", "default": "https://api.flagsmith.com", "description": "Flagsmith API URL (self-hosted: e.g. http://localhost:8000)" },
         "flagkit.projectId": { "type": ["number", "null"], "default": null, "description": "Flagsmith project id" },
         "flagkit.inline": { "type": "boolean", "default": true, "description": "Show live values at the end of lines that mention a flag" },
-        "flagkit.refreshSeconds": { "type": "number", "default": 60, "minimum": 15, "description": "How often to reload flags" }
+        "flagkit.refreshSeconds": { "type": "number", "default": 60, "minimum": 15, "description": "How often to reload flags" },
+        "flagkit.codeLens": { "type": "boolean", "default": true, "description": "Show each flag's state per environment above the line, click to toggle (never Production)" },
+        "flagkit.staleDays": { "type": "number", "default": 14, "minimum": 1, "description": "A flag identical in every environment and untouched this long is reported as stale" }
       }
     }
   }

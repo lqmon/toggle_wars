@@ -14,7 +14,11 @@ const HELP = `flagkit — self-hosted Flagsmith + Experimentation, ready in one 
 Usage: flagkit <command> [options]
 
 Stack
-  up                 Start self-hosted Flagsmith in Docker and bootstrap it (no clicking)
+  up [--demo]        Start self-hosted Flagsmith in Docker and bootstrap it (no clicking).
+                     --demo also seeds flags + an A/B test with visitors, and serves the sample app
+                     (:3000) and the admin panel (:4100): a working setup from one command
+  snapshot save|restore|list [name]  The whole local Flagsmith as one file: reset before a demo,
+                     roll back a bad bulk change, hand a teammate your exact setup
   down [--wipe]      Stop the stack (--wipe also deletes its data)
   bootstrap          Bootstrap an already-running Flagsmith (--api-url, --email)
   status             Show URLs, keys and environments
@@ -42,6 +46,22 @@ Experiments
 
 Dashboard
   tui                Terminal dashboard: flags × environments, experiments, doctor, approvals
+  panel              Local web admin panel for non-developers: guarded toggles, reasons, schedules,
+                     promote Staging → Production, audit log with revert, user lookup ([--port 4100] [--code .])
+  promote <from> <to>  Preview (then --yes --reason "…") copying flag states between environments
+  schedule [add|run|cancel]  Scheduled flag changes (--flag f --env E --at ISO --on|--off|--value v --reason r)
+  set <flag>         Change a flag, audited: --env E (--on | --off | --value v) [--reason r]
+                     (Production needs a reason; flags in a running experiment are refused)
+  audit [--flag f]   Every change made through FlagKit: who, why, before → after
+  revert <audit id>  Put a flag back exactly as it was before that change
+
+Code
+  init <template> [dir]  Starter app with flags wired in: express | react  (typed flags, offline defaults,
+                     both-sides tests, flag lint in CI)
+  codegen            Typed flag names + offline defaults from Flagsmith ([--env Production] [--out f] [--lang ts|js])
+  lint               Find flags the code asks for that don't exist (typos), stale and unused flags
+                     ([--code .] [--flags-file src/flags.generated.js for CI without Flagsmith]
+                     [--strict] [--format text|json|github]); exit 1 on errors
 
 Agents
   explain <user>     Which flags this user gets in each environment, and why
@@ -107,6 +127,20 @@ const { values, positionals } = parseArgs({
     interval: { type: 'string', default: '300' },
     traits: { type: 'string' },
     'hide-hypothesis': { type: 'boolean', default: false },
+    code: { type: 'string' },
+    'flags-file': { type: 'string' },
+    format: { type: 'string' },
+    strict: { type: 'boolean', default: false },
+    'stale-days': { type: 'string', default: '14' },
+    at: { type: 'string' },
+    on: { type: 'boolean', default: false },
+    off: { type: 'boolean', default: false },
+    value: { type: 'string' },
+    reason: { type: 'string' },
+    actor: { type: 'string' },
+    lang: { type: 'string' },
+    force: { type: 'boolean', default: false },
+    demo: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -129,7 +163,31 @@ try {
       }
       console.log('✔ Flagsmith is ready (bound to 127.0.0.1, sign-up disabled).');
       printStatus(s);
-      console.log('  Next:  flagkit experiment create  →  flagkit simulate  →  flagkit tui\n');
+      if (!values.demo) { console.log('  Next:  flagkit up --demo (sample data + app + admin panel)  ·  flagkit tui  ·  flagkit panel\n'); break; }
+      // --demo: everything a first look needs, from the same command. Idempotent: re-running reuses what exists.
+      const exp = await import('../src/experiment.js');
+      const { ensureStarterFlags } = await import('../src/init.js');
+      console.log('▶ Seeding demo data (starter flags, an A/B test with simulated visitors)…');
+      // The API container was just recreated to lock sign-up: wait until it answers again.
+      const { waitForHealthy } = await import('../src/api.js');
+      await waitForHealthy(s.apiUrl, { timeoutMs: 120_000 });
+      await new Promise((r) => setTimeout(r, 2000));
+      await ensureStarterFlags(s);
+      const x = await exp.createDemoExperiment(s, { envName: 'Development' });
+      const st = loadState();
+      const r = await exp.adminOf(st).get(`environments/${st.environments[0].api_key}/experiments/${x.id}/results/`).catch(() => null);
+      const { summarise } = await import('../src/results.js');
+      if (summarise(r).rows.reduce((a, row) => a + row.exposures, 0) < 200) {
+        const { simulate } = await import('../src/simulate.js');
+        await simulate(st, { users: 600, envName: 'Development' });
+        await exp.adminOf(st).post(`environments/${st.environments[0].api_key}/experiments/${x.id}/results/refresh/`).catch(() => {});
+      }
+      const { serveDemo } = await import('../src/demo-server.js');
+      const { runPanel } = await import('../src/panel.js');
+      serveDemo(st, { port: 3000, envName: 'Development' });
+      runPanel(st, { port: 4100, codeRoot: process.cwd() });
+      console.log('\n  Also try:  flagkit tui  ·  flagkit init react my-app  ·  flagkit snapshot save clean-demo\n');
+      await new Promise(() => {});
       break;
     }
     case 'down':
@@ -254,6 +312,131 @@ try {
       if (typed !== c.id) { console.log('Not confirmed. Nothing changed.'); break; }
       const done = cmd === 'approve' ? await approveChange(requireState(), c.id) : rejectChange(c.id);
       console.log(`${done.status === 'applied' ? '✔' : done.status === 'rejected' ? '✖ rejected' : '✖ failed'}  ${done.result || ''}`);
+      break;
+    }
+    case 'panel': {
+      const { runPanel } = await import('../src/panel.js');
+      runPanel(requireState(), { port: process.argv.some((a) => a.startsWith('--port')) ? Number(values.port) : 4100, codeRoot: path.resolve(values.code || '.') });
+      await new Promise(() => {});
+      break;
+    }
+    case 'lint': {
+      const { loadFlags, scanCode, lint, formatLint } = await import('../src/flags.js');
+      let flags, names;
+      if (values['flags-file']) {
+        // Offline (CI): the flag list comes from the committed codegen file; only unknown-flag checks apply.
+        const { readSnapshot } = await import('../src/codegen.js');
+        names = Object.keys(readSnapshot(values['flags-file']));
+        flags = [];
+      } else {
+        const { adminOf } = await import('../src/experiment.js');
+        const st = requireState();
+        flags = await loadFlags(adminOf(st), { projectId: st.project.id, environments: st.environments });
+        names = flags.map((f) => f.name);
+      }
+      const scan = scanCode(path.resolve(values.code || '.'), names);
+      const findings = lint(flags, scan, { staleDays: Number(values['stale-days']) });
+      const format = values.json ? 'json' : values.format || (process.env.GITHUB_ACTIONS ? 'github' : 'text');
+      console.log(formatLint(findings, { format }));
+      if (format === 'github') console.log(formatLint(findings));
+      process.exitCode = findings.some((f) => f.level === 'error') || (values.strict && findings.length) ? 1 : 0;
+      break;
+    }
+    case 'schedule': {
+      const ch = await import('../src/changes.js');
+      const { clean } = await import('../src/sanitize.js');
+      if (sub === 'run') {
+        const ran = await ch.runDueSchedules(requireState());
+        for (const s of ran) console.log(`${clean(s.id)}  ${clean(s.flag)} in ${clean(s.env)} → ${clean(s.status)} (${clean(s.result)})`);
+        if (!ran.length) console.log('Nothing due.');
+      } else if (sub === 'add') {
+        if (!values.flag || !values.at) throw new Error('Usage: flagkit schedule add --flag f --env Production --at 2026-12-01T09:00 (--on | --off | --value v) --reason "…" --actor you');
+        const s = await ch.addSchedule(requireState(), { flag: values.flag, env: values.env, at: values.at, enabled: values.on ? true : values.off ? false : undefined, value: values.value }, { actor: values.actor || process.env.USER, reason: values.reason });
+        console.log(`✔ ${s.id}: ${s.flag} in ${s.env} at ${new Date(s.at).toLocaleString()}`);
+      } else if (sub === 'cancel') {
+        const id = positionals[2];
+        console.log(`cancelled ${ch.cancelSchedule(id, process.env.USER).id}`);
+      } else {
+        const list = ch.listSchedules(values.all ? undefined : 'pending');
+        if (!list.length) console.log(values.all ? 'No schedules.' : 'Nothing scheduled. (--all for history)');
+        for (const s of list) console.log(`${clean(s.id)}  ${clean(s.status).padEnd(9)} ${new Date(s.at).toLocaleString().padEnd(22)} ${clean(s.flag)} in ${clean(s.env)} → ${s.value !== undefined ? `value=${clean(s.value)}` : s.enabled ? 'ON' : 'OFF'}  (${clean(s.actor)}: ${clean(s.reason)})`);
+      }
+      break;
+    }
+    case 'promote': {
+      const ch = await import('../src/changes.js');
+      const { clean } = await import('../src/sanitize.js');
+      const [from, to] = [positionals[1], positionals[2]];
+      if (!from || !to) throw new Error('Usage: flagkit promote <from env> <to env> [--flag f] [--yes --reason "…"]');
+      const only = values.flag ? values.flag.split(',') : undefined;
+      const plan = await ch.promotePlan(requireState(), { from, to, flags: only });
+      if (!plan.length) { console.log(`${to} already matches ${from}.`); break; }
+      const st = (x) => `${x.enabled ? 'on' : 'off'}${x.value != null && x.value !== '' ? ` ${clean(String(x.value))}` : ''}`;
+      for (const p of plan) console.log(`  ${clean(p.flag).padEnd(24)} ${st(p.to).padEnd(18)} → ${st(p.from)}${p.blocked ? `   🔒 skipped: ${p.blocked}` : ''}`);
+      if (!values.yes) { console.log(`\nPreview only. Re-run with --yes --reason "…" to copy these to ${to}.`); break; }
+      const done = await ch.promote(requireState(), { from, to, flags: only }, { actor: values.actor || process.env.USER, reason: values.reason, via: 'cli' });
+      for (const d of done) console.log(d.error ? `✖ ${clean(d.flag)}: ${d.error}` : d.skipped ? `· ${clean(d.flag)}: skipped (${d.skipped})` : `✔ ${clean(d.flag)} (${d.id})`);
+      break;
+    }
+    case 'set': {
+      const ch = await import('../src/changes.js');
+      if (!sub || (!values.on && !values.off && values.value === undefined)) throw new Error('Usage: flagkit set <flag> --env Development (--on | --off | --value v) [--reason "…"] [--actor you]');
+      const r = await ch.setFlag(requireState(), { flag: sub, env: values.env, enabled: values.on ? true : values.off ? false : undefined, value: values.value }, { actor: values.actor || process.env.USER || 'cli', reason: values.reason, via: 'cli' });
+      const { clean } = await import('../src/sanitize.js');
+      const st = (x) => `${x.enabled ? 'on' : 'off'}${x.value != null && x.value !== '' ? ` ${clean(String(x.value))}` : ''}`;
+      console.log(r.noop ? 'Already in that state.' : `✔ ${clean(sub)} in ${clean(r.env)}: ${st(r.before)} → ${st(r.after)}  (${r.id}; undo: flagkit revert ${r.id})`);
+      break;
+    }
+    case 'audit': {
+      const ch = await import('../src/changes.js');
+      const { clean } = await import('../src/sanitize.js');
+      const st = (x) => `${x.enabled ? 'on' : 'off'}${x.value != null && x.value !== '' ? ` ${clean(String(x.value))}` : ''}`;
+      const list = ch.auditLog({ flag: values.flag, limit: 50 });
+      if (!list.length) console.log('No changes recorded yet.');
+      for (const e of list) console.log(`${clean(e.id)}  ${clean(e.at).slice(0, 19)}  ${clean(e.flag)} in ${clean(e.env)}: ${st(e.before)} → ${st(e.after)}  by ${clean(e.actor)} via ${clean(e.via)}${e.reason ? `  “${clean(e.reason)}”` : ''}`);
+      break;
+    }
+    case 'revert': {
+      const ch = await import('../src/changes.js');
+      if (!sub) throw new Error('Usage: flagkit revert <audit id> [--reason "…"]  (ids from `flagkit audit`)');
+      const r = await ch.revert(requireState(), sub, { actor: values.actor || process.env.USER, reason: values.reason, via: 'cli' });
+      console.log(r.noop ? 'Already in that state.' : `✔ ${r.flag} in ${r.env} reverted (${r.id})`);
+      break;
+    }
+    case 'codegen': {
+      const { codegen } = await import('../src/codegen.js');
+      const out = await codegen(requireState(), { env: values.env === 'Development' && !process.argv.includes('--env') ? 'Production' : values.env, out: values.out === 'docs' ? undefined : values.out, lang: values.lang });
+      console.log(`✔ wrote ${out.file}: ${out.count} flags, typed, with ${out.env} values as offline defaults`);
+      break;
+    }
+    case 'init': {
+      const { init } = await import('../src/init.js');
+      await init(loadState(), { template: sub, dir: positionals[2], force: values.force });
+      break;
+    }
+    case 'snapshot': {
+      const snap = await import('../src/snapshot.js');
+      const name = positionals[2];
+      if (sub === 'save') {
+        const r = snap.saveSnapshot(name || new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19));
+        console.log(`✔ snapshot "${r.name}": ${(r.bytes / 1024).toFixed(0)} KB compressed (${(r.rawBytes / 1024 / 1024).toFixed(1)} MB of SQL) in ${path.relative(process.cwd(), r.file)}`);
+      } else if (sub === 'restore') {
+        if (!name) throw new Error('Usage: flagkit snapshot restore <name>  (see `flagkit snapshot list`)');
+        if (!values.yes) {
+          if (!process.stdin.isTTY) throw new Error('restore replaces ALL Flagsmith data; pass --yes to confirm non-interactively');
+          const readline = await import('node:readline/promises');
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          const typed = (await rl.question(`This replaces ALL data in the local Flagsmith with snapshot "${name}". Type the name to confirm: `)).trim();
+          rl.close();
+          if (typed !== name) { console.log('Not confirmed. Nothing changed.'); break; }
+        }
+        snap.restoreSnapshot(name, { compose: (args) => compose(args, values.project) });
+        console.log(`✔ restored "${name}"`);
+      } else {
+        const list = snap.listSnapshots();
+        if (!list.length) console.log('No snapshots. `flagkit snapshot save <name>` takes one.');
+        for (const x of list) console.log(`${x.name.padEnd(30)} ${(x.bytes / 1024).toFixed(0).padStart(6)} KB  ${x.at.slice(0, 19).replace('T', ' ')}`);
+      }
       break;
     }
     case 'tui': {

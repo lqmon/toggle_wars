@@ -126,6 +126,75 @@ jobs:
       - name: MCP server (agent proposes, nothing applied without a human)
         run: node test/mcp-smoke.mjs
 
+      - name: Audited changes, guards, revert, promote, schedules
+        run: |
+          set -euo pipefail
+          fk() { node bin/flagkit.js "$@"; }
+          refused() { if fk "$@" > refused.txt 2>&1; then echo "expected a refusal: $*"; exit 1; fi; cat refused.txt; }
+          fk set cta_color --env Development --value teal --actor ci > out.txt; cat out.txt
+          ID=$(grep -o 'aud_[0-9a-f]*' out.txt | head -1)
+          refused set cta_color --env Production --off --actor ci        # Production needs a reason
+          grep -q 'reason is required' refused.txt
+          refused set hero_headline --env Development --off --actor ci   # locked: running experiment
+          grep -q 'running experiment' refused.txt
+          fk audit --flag cta_color > audit.txt; grep -q 'control → on teal' audit.txt
+          fk revert "$ID" --actor ci
+          fk promote Development Staging > promote.txt; cat promote.txt
+          fk schedule add --flag cta_color --env Staging --off --at "$(date -u -d '+3 seconds' +%FT%TZ)" --actor ci --reason ci
+          sleep 5; fk schedule run > sched.txt; cat sched.txt; grep -q ' done ' sched.txt
+          fk set cta_color --env Staging --on --actor ci --reason "ci cleanup"
+
+      - name: Admin panel (token, host and origin checks; a change through the API)
+        run: |
+          set -euo pipefail
+          node bin/flagkit.js panel > panel.log 2>&1 &
+          for i in $(seq 1 30); do grep -q '#t=' panel.log && break; sleep 1; done
+          T=$(grep -o '#t=[^ ]*' panel.log | cut -c4-); echo "::add-mask::$T"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:4100/api/flags)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example:4100' -H "X-FlagKit-Token: $T" localhost:4100/api/flags)" = 421
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "X-FlagKit-Token: $T" -H 'Origin: http://evil.example' -H 'X-Actor: ci' -H 'Content-Type: application/json' -d '{}' localhost:4100/api/flags/set)" = 403
+          curl -sf -H "X-FlagKit-Token: $T" localhost:4100/api/flags > flags.json; jq -e '.flags | length > 0' flags.json
+          curl -sf -X POST -H "X-FlagKit-Token: $T" -H 'X-Actor: ci' -H 'Content-Type: application/json' -d '{"flag":"cta_color","env":"Development","enabled":false}' localhost:4100/api/flags/set > set.json
+          jq -e '.via == "panel"' set.json
+          node bin/flagkit.js set cta_color --env Development --on --actor ci
+
+      - name: lint + codegen (a typo in code is a CI failure with a suggestion)
+        run: |
+          set -euo pipefail
+          node bin/flagkit.js codegen --out "$RUNNER_TEMP/flags.generated.ts"
+          grep -q 'export type FlagName' "$RUNNER_TEMP/flags.generated.ts"
+          mkdir -p "$RUNNER_TEMP/lintme" && echo "flagsmith.hasFeature('hero_headlin')" > "$RUNNER_TEMP/lintme/a.js"
+          if node bin/flagkit.js lint --code "$RUNNER_TEMP/lintme" --format text > lint.txt; then echo "lint should fail"; exit 1; fi
+          cat lint.txt; grep -q 'Did you mean "hero_headline"' lint.txt
+
+      - name: Starter templates (flags created, typed, every flag state on every page)
+        run: |
+          set -euo pipefail
+          for t in express react; do
+            node bin/flagkit.js init $t "$RUNNER_TEMP/$t"
+            ( cd "$RUNNER_TEMP/$t" && npm pkg set "devDependencies.flagsmith-kit=file:$GITHUB_WORKSPACE" && npm install --no-audit --no-fund && npm test )
+          done
+          ( cd "$RUNNER_TEMP/react" && npx vite build )
+          ( cd "$RUNNER_TEMP/express" && npx flagkit lint --flags-file src/flags.generated.js )
+          ( cd "$RUNNER_TEMP/express" && PORT=3311 node src/server.js > "$RUNNER_TEMP/express.log" 2>&1 & )
+          for i in $(seq 1 20); do curl -s localhost:3311/health > /dev/null && break; sleep 1; done
+          curl -sI localhost:3311/ > headers.txt; grep -qi 'x-flags-source: flagsmith' headers.txt
+          node bin/flagkit.js set maintenance_mode --env Development --on --actor ci
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3311/)" = 503
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3311/health)" = 200
+          node bin/flagkit.js set maintenance_mode --env Development --off --actor ci
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3311/)" = 200
+
+      - name: Snapshot save → change → restore
+        run: |
+          set -euo pipefail
+          node bin/flagkit.js snapshot save ci
+          node bin/flagkit.js set cta_color --env Development --value teal --actor ci
+          node bin/flagkit.js snapshot restore ci --yes
+          node bin/flagkit.js audit --flag cta_color >/dev/null
+          node -e "import('./src/experiment.js').then(async (m) => { const s = (await import('./src/config.js')).loadState(); const f = await (await import('./src/flags.js')).loadFlags(m.adminOf(s), { projectId: s.project.id, environments: s.environments }); if (f.find((x) => x.name === 'cta_color').envs.Development.value !== 'control') process.exit(1); })"
+          node bin/flagkit.js doctor
+
       - name: Security posture
         run: |
           # admin API must not be reachable on the runner's non-loopback address
