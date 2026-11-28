@@ -129,7 +129,7 @@ human → TUI → 4 Approvals (1) → a → y
 
 **https://lqmon.github.io/toggle_wars/**: FlagKit A/B tests its own landing page on **Flagsmith Cloud**.
 
-- **Hypothesis:** replacing the generic headline *"Feature flags for modern teams"* with the benefit-led *"Ship on Friday. Roll back in one click."* will increase the share of visitors who click **Get early access**.
+- **Hypothesis:** replacing the generic, category-style headline with a benefit-led one (what you can do with FlagKit) will increase the share of visitors who click **Get early access**. The exact wording of both is kept out of this README until the test ends, so readers who come here first don't see both versions and skew it.
 - **Flag:** `hero_headline`, multivariate. Control `control`, variant key `benefit`. **The headline is the only difference** between the arms.
 - **Metric:** `signup_click`, occurrence, higher is better. It fires early in a visit, so data comes in fast.
 - **Split:** 100% of visitors, 50/50. Each anonymous visitor gets a persisted random UUID as their identity.
@@ -138,7 +138,24 @@ human → TUI → 4 Approvals (1) → a → y
 - **Instrumentation** ([demo-app/index.html](demo-app/index.html)): `getExperimentFlag('hero_headline')` logs the exposure, the page branches on `flag.variant`, and the button calls `trackEvent('signup_click')` once per visit.
 - **Privacy:** anonymous ID, variant and click only. No cookies, no personal data. Only the client-side key is published, and the page runs under a strict content-security policy.
 
-Results: `FLAGSMITH_ENVIRONMENT=<prod key> skills/flagsmith-experiment-rollout/scripts/results.sh 1245`, or the Flagsmith dashboard → Experiments.
+### Results
+
+There are two separate experiments, and they are never mixed.
+
+**1. Simulated traffic, self-hosted (done ✅).** The same flag, metric and 50/50 split ran on the local FlagKit stack, with 2,001 visitors from `flagkit simulate`. The simulator *assumes* the true click rates (8% control, 11.5% benefit) and Flagsmith has to discover them from exposures and events alone:
+
+| version | visitors | clicks | rate | lift vs control | 95% credible interval | chance to beat control |
+|---|---|---|---|---|---|---|
+| control | 969 | 73 | 7.5% | (baseline) | | |
+| benefit | 1,032 | 120 | 11.6% | **+54%** | +12% to +97% | **99.4%** |
+
+How to read it: the benefit-led headline almost certainly converts better (99.4% is above the 95% stop rule), and the lift is very likely somewhere between +12% and +97%. The interval is wide, so the *size* of the win is uncertain even though the *direction* isn't. The split is 48/52, close enough to 50/50 that there's no sample-ratio warning. The measured rates (7.5% and 11.6%) land close to the assumed ones (8% and 11.5%), which shows the whole pipeline works: flag → exposure → event → warehouse → Bayesian result. At 601 visitors the same experiment showed only 66.8%, which is why the stop rule waits for data.
+
+Reproduce it: `flagkit up && flagkit experiment create && flagkit simulate --users 2000 && flagkit experiment results`
+
+**2. Real visitors, Flagsmith Cloud (still running, more visitors needed 🙏).** As of Nov 28, experiment #1245 has **11 real visitors** (7 benefit, 4 control) and 3 clicks. That is far below the 50-per-arm stop rule, so Flagsmith doesn't compute a win probability yet, and we don't claim one. **[Visit the page](https://lqmon.github.io/toggle_wars/) to add your vote.** Final real results and the rollout decision will be added here before the deadline.
+
+Check live: `FLAGSMITH_ENVIRONMENT=<prod key> skills/flagsmith-experiment-rollout/scripts/results.sh 1245`, or the Flagsmith dashboard → Experiments.
 
 ## Security
 
