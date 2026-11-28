@@ -160,7 +160,8 @@ try {
       const { resolveSource } = await import('../src/source.js');
       const { buildReport } = await import('../src/report.js');
       if (!/^\d+$/.test(sub || '')) throw new Error('Usage: flagkit report <experiment id> [--env Development | --env-key <key>] [--out report.md] [--json]');
-      const src = resolveSource({ apiUrl: values['api-url'] !== 'http://localhost:8000' ? values['api-url'] : undefined, adminKey: values['admin-key'] || process.env.FLAGSMITH_ADMIN_KEY, envKey: values['env-key'], envName: values.env });
+      const explicitUrl = process.argv.some((a) => a === '--api-url' || a.startsWith('--api-url='));
+      const src = resolveSource({ apiUrl: explicitUrl ? values['api-url'] : undefined, adminKey: values['admin-key'] || process.env.FLAGSMITH_ADMIN_KEY, envKey: values['env-key'], envName: values.env });
       const r = await buildReport(src, sub, { hideHypothesis: values['hide-hypothesis'] });
       if (values.json) console.log(JSON.stringify({ action: r.action, verdict: r.verdict, checks: r.checks, rows: r.s.rows, srm: r.srm }));
       else if (values.out !== 'docs') { const fs = await import('node:fs'); fs.writeFileSync(values.out, r.markdown); console.log(`✔ wrote ${values.out} (${r.action})`); }
