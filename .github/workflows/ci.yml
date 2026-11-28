@@ -22,8 +22,8 @@ jobs:
       - run: node --test test/*.test.js
       - name: Lint skill scripts
         run: bash -n skills/*/scripts/*.sh
-      - name: Validate skill against the Agent Skills spec
-        run: pipx run --spec "git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref" skills-ref validate skills/flagsmith-experiment-rollout
+      - name: Validate skills against the Agent Skills spec
+        run: for s in skills/*/; do pipx run --spec "git+https://github.com/agentskills/agentskills.git#subdirectory=skills-ref" skills-ref validate "$s"; done
 
   # Boots real self-hosted Flagsmith on a fresh runner and runs the whole journey.
   e2e:
@@ -38,7 +38,13 @@ jobs:
       - run: npm ci
 
       - name: flagkit up (zero-click self-hosted Flagsmith + Experimentation)
-        run: time node bin/flagkit.js up
+        run: |
+          time node bin/flagkit.js up
+          # hand the local stack's keys to later steps (masked in logs)
+          dev=$(jq -r '.environments[] | select(.name=="Development") | .api_key' .flagkit/state.json)
+          adm=$(jq -r .masterKey .flagkit/state.json)
+          echo "::add-mask::$adm"
+          echo "DEV_KEY=$dev" >> "$GITHUB_ENV"; echo "ADMIN_KEY=$adm" >> "$GITHUB_ENV"
 
       - name: flagkit doctor (must report 0 failures)
         run: |
@@ -76,6 +82,46 @@ jobs:
           $S/results.sh "$id"
           $S/rollout.sh "$id" cta_color teal | tee rollout.txt
           grep -q 'eval: 5/5 -> teal' rollout.txt
+
+      - name: plan, tail, explain, report, watch
+        run: |
+          node bin/flagkit.js plan --baseline 0.08 --lift 0.44 --daily 300 | tee plan.txt
+          grep -q 'visitors per version' plan.txt
+          node bin/flagkit.js tail --since 1h --once | tee tail.txt
+          grep -q 'exposure' tail.txt
+          node bin/flagkit.js explain ci-user-1 --flag hero_headline | tee explain.txt
+          grep -q 'in experiment #' explain.txt
+          node bin/flagkit.js report 1 --out report.md && cat report.md >> "$GITHUB_STEP_SUMMARY"
+          grep -q '### Verdict' report.md
+          # guardrail: a clearly worse variant must produce a pending, human-approved kill request
+          node -e "import('./src/experiment.js').then(async (m) => { const { loadState } = await import('./src/config.js'); await m.createExperiment(loadState(), { envName: 'Development', flag: 'checkout_copy', variants: ['urgent'], event: 'checkout_click', name: 'Checkout copy guardrail', hypothesis: 'Urgent copy wins' }); })"
+          node bin/flagkit.js simulate --flag checkout_copy --event checkout_click --rates control=0.2,urgent=0.05 --users 500
+          for i in 1 2 3 4 5 6; do node bin/flagkit.js watch --once | tee watch.txt; grep -q 'filed\|already pending' watch.txt && break; sleep 20; done
+          grep -q 'clearly worse' watch.txt
+          node bin/flagkit.js approvals | grep -q 'ship_winner'
+
+      - name: Kill-switch skill end to end (snapshot → kill → verify → trail → rollback)
+        run: |
+          source flagsmith.env
+          export FLAGSMITH_ENVIRONMENT=$FLAGSMITH_ENV_STAGING
+          S=skills/flagsmith-kill-switch/scripts
+          $S/suspects.sh cta color
+          rb=$($S/snapshot.sh cta_color | tee snap.txt | sed -n 's/^ROLLBACK: //p')
+          cat snap.txt
+          $S/kill.sh cta_color | tee kill.txt
+          grep -q 'eval: 5/5 fresh users get it OFF' kill.txt
+          $S/trail.sh cta_color "CI drill" "$rb"
+          eval "$rb"
+          test "$(flagsmith flag get cta_color --jq .enabled)" = true
+
+      - name: Report as a GitHub Action (the reusable lqmon/toggle_wars/report action)
+        uses: ./report
+        with:
+          experiment-id: '1'
+          environment-key: ${{ env.DEV_KEY }}
+          admin-key: ${{ env.ADMIN_KEY }}
+          api-url: http://localhost:8000
+          comment-on-pr: 'false'
 
       - name: MCP server (agent proposes, nothing applied without a human)
         run: node test/mcp-smoke.mjs

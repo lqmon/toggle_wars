@@ -4,3 +4,4 @@ flagsmith.env
 *.log
 .DS_Store
 examples/.stock/
+vscode-extension/test/result.json

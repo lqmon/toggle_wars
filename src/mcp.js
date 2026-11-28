@@ -10,6 +10,8 @@ import { summarise, formatTable } from './results.js';
 import { runDoctor } from './doctor.js';
 import { proposeChange, getChange, listChanges, isProduction } from './approvals.js';
 import { clean } from './sanitize.js';
+import { explain } from './explain.js';
+import { buildReport } from './report.js';
 
 const valueOf = (v) => (v && typeof v === 'object' ? v.string_value ?? v.integer_value ?? v.boolean_value : v);
 // Server-sourced strings are cleaned before they go back to the agent (no smuggled escapes).
@@ -100,6 +102,34 @@ export async function runMcp(state) {
         : best && best.win >= 0.95 && s.rows.every((row) => row.exposures >= 50) ? `verdict: "${best.key}" meets the ship bar`
         : 'verdict: not conclusive yet';
       return text(`#${x.id} ${x.status}: ${x.name}\nhypothesis: ${x.hypothesis}\n${formatTable(r)}\n${verdict}`);
+    } catch (e) { return fail(e); }
+  });
+
+  server.registerTool('flagkit_explain_user', {
+    title: 'Explain which flags a user sees, and why',
+    description: 'For one user (identity): every flag\'s on/off state and value in each environment, with the reason ' +
+      '(experiment bucket, segment match, percentage split, identity override or environment default). ' +
+      'Uses Flagsmith\'s own evaluation; never creates the user and records no exposure.',
+    inputSchema: {
+      identity: safeText(200).refine((v) => v.length > 0, 'required').describe('The identifier your app passes to the SDK'),
+      flag: name.optional().describe('Only this flag'),
+      traits: safeText(300).optional().describe('Evaluate with these traits, e.g. plan=pro,country=IN'),
+    },
+    annotations: { readOnlyHint: true },
+  }, async ({ identity, flag, traits }) => {
+    try { return text(await explain(state, { identity, flag, traits })); } catch (e) { return fail(e); }
+  });
+
+  server.registerTool('flagkit_experiment_report', {
+    title: 'Experiment report (Markdown)',
+    description: 'A readable report for one experiment: plain-English verdict, results table, health checks (sample size, sample ratio, duration) and the next step. Good for PR descriptions and summaries.',
+    inputSchema: { experiment_id: z.number().int().positive(), environment: envArg },
+    annotations: { readOnlyHint: true },
+  }, async ({ experiment_id, environment }) => {
+    try {
+      const env = envOf(state, environment);
+      const r = await buildReport({ api, envKey: env.api_key, dashboard: state.apiUrl, projectId: state.project.id }, experiment_id);
+      return { content: [{ type: 'text', text: r.markdown }] };
     } catch (e) { return fail(e); }
   });
 

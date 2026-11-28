@@ -7,6 +7,10 @@ console.log('TOOLS:', tools.tools.map((t) => t.name).join(', '));
 const call = async (name, args = {}) => { const r = await c.callTool({ name, arguments: args }); const t = r.content[0].text; console.log(`\n== ${name} ${JSON.stringify(args)} (${t.length} chars)${r.isError ? ' ERROR' : ''}\n${t}`); return t; };
 await call('flagkit_list_flags');
 await call('flagkit_list_experiments');
+const ex = await call('flagkit_explain_user', { identity: 'smoke-test-user', flag: 'hero_headline' });
+if (!/Development/.test(ex) || !/(experiment|default|split)/.test(ex)) { console.error('explain_user gave no reasons'); process.exit(1); }
+const rep = await call('flagkit_experiment_report', { experiment_id: 1, environment: 'Development' });
+if (!/### Verdict/.test(rep)) { console.error('experiment_report has no verdict'); process.exit(1); }
 await call('flagkit_experiment_results', { experiment_id: 2, environment: 'Staging' });
 const p = await call('flagkit_propose_change', { kind: 'toggle_flag', environment: 'Production', flag: 'hero_headline', enabled: false, reason: 'Kill switch drill for the demo' });
 await call('flagkit_propose_change', { kind: 'toggle_flag', environment: 'Production', flag: 'x; rm -rf /', enabled: false, reason: 'hostile input' });

@@ -1,17 +1,20 @@
 {
-  "name": "flagkit",
-  "version": "0.1.0",
+  "name": "flagsmith-kit",
+  "version": "0.3.0",
   "description": "Self-hosted Flagsmith + Experimentation in one command: zero-click bootstrap, a doctor that finds silent breakage, a terminal dashboard, an MCP server and an agent skill.",
   "type": "module",
   "bin": {
-    "flagkit": "bin/flagkit.js"
+    "flagkit": "bin/flagkit.js",
+    "flagsmith-kit": "bin/flagkit.js"
   },
   "files": [
     "bin",
     "src",
     "stack",
     "demo-app",
-    "skills"
+    "skills",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -22,6 +25,14 @@
     "doctor": "node bin/flagkit.js doctor",
     "tui": "node bin/flagkit.js tui"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lqmon/toggle_wars.git"
+  },
+  "homepage": "https://github.com/lqmon/toggle_wars#readme",
+  "bugs": {
+    "url": "https://github.com/lqmon/toggle_wars/issues"
+  },
   "license": "MIT",
   "keywords": [
     "flagsmith",
@@ -29,7 +40,10 @@
     "experimentation",
     "ab-testing",
     "self-hosted",
-    "tui"
+    "tui",
+    "mcp",
+    "agent-skill",
+    "flagsmith-cli"
   ],
   "dependencies": {
     "@flagsmith/flagsmith": "^12.6.0",

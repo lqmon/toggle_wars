@@ -1,0 +1,30 @@
+{
+  "name": "flagkit-vscode",
+  "displayName": "FlagKit: live Flagsmith flags",
+  "description": "See each Flagsmith flag's live state in every environment, and its experiment's chance to win, right next to the flag name in your code.",
+  "version": "0.1.0",
+  "publisher": "lqmon",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/lqmon/toggle_wars" },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "keywords": ["flagsmith", "feature flags", "ab testing", "experimentation"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "flagkit.connect", "title": "FlagKit: Connect to Flagsmith" },
+      { "command": "flagkit.refresh", "title": "FlagKit: Refresh flags" },
+      { "command": "flagkit.disconnect", "title": "FlagKit: Forget API key" }
+    ],
+    "configuration": {
+      "title": "FlagKit",
+      "properties": {
+        "flagkit.apiUrl": { "type": "string", "default": "https://api.flagsmith.com", "description": "Flagsmith API URL (self-hosted: e.g. http://localhost:8000)" },
+        "flagkit.projectId": { "type": ["number", "null"], "default": null, "description": "Flagsmith project id" },
+        "flagkit.inline": { "type": "boolean", "default": true, "description": "Show live values at the end of lines that mention a flag" },
+        "flagkit.refreshSeconds": { "type": "number", "default": 60, "minimum": 15, "description": "How often to reload flags" }
+      }
+    }
+  }
+}

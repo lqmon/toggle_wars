@@ -26,6 +26,14 @@ Diagnose
 Experiments
   experiment create  Create the demo landing-page A/B test (flag + metric + experiment) and start it
   experiment results Print live results (win probability, lift)
+  plan               How many visitors a test needs before you start
+                     (--baseline 0.08 --lift 0.2 [--daily 500] [--arms 2])
+  report <id>        Readable results report: verdict, health checks, chart, next step (Markdown)
+                     (--env Development | --env-key <key> [--admin-key k --api-url u] [--out report.md])
+  tail               Live feed of exposures and conversions as they arrive (self-hosted)
+                     ([--flag f] [--env Development] [--since 10m] [--once])
+  watch              Guardrails for running experiments: file a human-approved kill request on trouble
+                     ([--interval 300] [--once] [--env Development])
   simulate           Send simulated visitors through an experiment
                      (--users 600 --env Development [--flag f --event e --rates control=0.08,teal=0.2])
   demo               Serve the sample landing page on http://localhost:3000
@@ -36,6 +44,7 @@ Dashboard
   tui                Terminal dashboard: flags × environments, experiments, doctor, approvals
 
 Agents
+  explain <user>     Which flags this user gets in each environment, and why
   mcp                MCP server (stdio) for coding agents: read tools + change PROPOSALS only
   approvals [--all]  List change requests filed by agents
   approve <id>       Apply a request (interactive terminal only; type the id to confirm)
@@ -88,6 +97,16 @@ const { values, positionals } = parseArgs({
     flag: { type: 'string' },
     event: { type: 'string' },
     rates: { type: 'string' },
+    baseline: { type: 'string' },
+    lift: { type: 'string' },
+    daily: { type: 'string' },
+    arms: { type: 'string', default: '2' },
+    'admin-key': { type: 'string' },
+    since: { type: 'string', default: '10m' },
+    once: { type: 'boolean', default: false },
+    interval: { type: 'string', default: '300' },
+    traits: { type: 'string' },
+    'hide-hypothesis': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -129,6 +148,39 @@ try {
       if (sub === 'create') await exp.createDemoExperiment(requireState(), { envName: values.env });
       else if (sub === 'results') await exp.printResults(requireState(), { envName: values.env, json: values.json });
       else console.log('Usage: flagkit experiment create|results');
+      break;
+    }
+    case 'plan': {
+      const { printPlan } = await import('../src/plan.js');
+      if (!values.baseline || !values.lift) throw new Error('Usage: flagkit plan --baseline 0.08 --lift 0.2 [--daily 500]  (rates as fractions: 0.08 = 8%, 0.2 = +20%)');
+      printPlan({ baseline: Number(values.baseline), lift: Number(values.lift), daily: values.daily ? Number(values.daily) : undefined, arms: Number(values.arms) });
+      break;
+    }
+    case 'report': {
+      const { resolveSource } = await import('../src/source.js');
+      const { buildReport } = await import('../src/report.js');
+      if (!/^\d+$/.test(sub || '')) throw new Error('Usage: flagkit report <experiment id> [--env Development | --env-key <key>] [--out report.md] [--json]');
+      const src = resolveSource({ apiUrl: values['api-url'] !== 'http://localhost:8000' ? values['api-url'] : undefined, adminKey: values['admin-key'] || process.env.FLAGSMITH_ADMIN_KEY, envKey: values['env-key'], envName: values.env });
+      const r = await buildReport(src, sub, { hideHypothesis: values['hide-hypothesis'] });
+      if (values.json) console.log(JSON.stringify({ action: r.action, verdict: r.verdict, checks: r.checks, rows: r.s.rows, srm: r.srm }));
+      else if (values.out !== 'docs') { const fs = await import('node:fs'); fs.writeFileSync(values.out, r.markdown); console.log(`✔ wrote ${values.out} (${r.action})`); }
+      else console.log(r.markdown);
+      break;
+    }
+    case 'tail': {
+      const { runTail } = await import('../src/tail.js');
+      await runTail(requireState(), { envName: values.env, flag: values.flag, since: values.since, once: values.once, project: values.project });
+      break;
+    }
+    case 'watch': {
+      const { runWatch } = await import('../src/watch.js');
+      await runWatch(requireState(), { envName: values.env, interval: Number(values.interval), once: values.once, json: values.json });
+      break;
+    }
+    case 'explain': {
+      const { explain } = await import('../src/explain.js');
+      if (!sub) throw new Error('Usage: flagkit explain <identity> [--flag f] [--env Development] [--traits plan=pro,country=IN]');
+      console.log(await explain(requireState(), { identity: sub, flag: values.flag, traits: values.traits }));
       break;
     }
     case 'simulate': {

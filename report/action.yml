@@ -1,0 +1,70 @@
+name: Flagsmith experiment report
+description: Post a readable A/B test report (verdict, health checks, chart, next step) to the job summary and, on pull requests, as a PR comment.
+author: FlagKit
+branding:
+  icon: bar-chart-2
+  color: green
+
+inputs:
+  experiment-id:
+    description: Experiment id
+    required: true
+  environment-key:
+    description: Environment key the experiment lives in
+    required: true
+  admin-key:
+    description: Organisation/Admin API key (pass a secret)
+    required: true
+  api-url:
+    description: Flagsmith API base URL (self-hosted); default Flagsmith Cloud
+    required: false
+    default: https://api.flagsmith.com
+  hide-hypothesis:
+    description: Leave the hypothesis text out (keeps version wording private while the test runs)
+    required: false
+    default: 'false'
+  comment-on-pr:
+    description: Also post or update a comment on the pull request (needs pull-requests write permission)
+    required: false
+    default: 'true'
+
+outputs:
+  action:
+    description: 'ship | keep-control | investigate | wait'
+    value: ${{ steps.report.outputs.action }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    - name: Install FlagKit
+      shell: bash
+      run: cd "$GITHUB_ACTION_PATH/.." && npm ci --omit=dev --no-audit --no-fund --silent
+    - name: Build report
+      id: report
+      shell: bash
+      env:
+        FLAGSMITH_ADMIN_KEY: ${{ inputs.admin-key }}
+        INPUT_ID: ${{ inputs.experiment-id }}
+        INPUT_ENV_KEY: ${{ inputs.environment-key }}
+        INPUT_API_URL: ${{ inputs.api-url }}
+        INPUT_HIDE: ${{ inputs.hide-hypothesis }}
+      run: |
+        [[ "$INPUT_ID" =~ ^[0-9]+$ ]] || { echo "experiment-id must be a number"; exit 1; }
+        args=(report "$INPUT_ID" --env-key "$INPUT_ENV_KEY" --api-url "$INPUT_API_URL" --out "$RUNNER_TEMP/flagkit-report.md")
+        [ "$INPUT_HIDE" = "true" ] && args+=(--hide-hypothesis)
+        node "$GITHUB_ACTION_PATH/../bin/flagkit.js" "${args[@]}"
+        cat "$RUNNER_TEMP/flagkit-report.md" >> "$GITHUB_STEP_SUMMARY"
+        action=$(node "$GITHUB_ACTION_PATH/../bin/flagkit.js" "${args[@]:0:6}" --json | jq -r .action)
+        echo "action=$action" >> "$GITHUB_OUTPUT"
+    - name: Comment on the pull request
+      if: inputs.comment-on-pr == 'true' && github.event.pull_request.number
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        body="$RUNNER_TEMP/flagkit-report.md"
+        gh pr comment "$PR" --edit-last --body-file "$body" 2>/dev/null || gh pr comment "$PR" --body-file "$body"
